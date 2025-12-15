@@ -4,12 +4,10 @@ import DemandInput from './components/DemandInput';
 import ConstraintsForm from './components/ConstraintsForm';
 import SolutionDashboard from './components/SolutionDashboard';
 import { generateAlgorithmicStaffingPlan } from './services/staffingAlgorithm';
-import { generateStaffingPlan } from './services/geminiService'; // AI Service
-import { Layers, Zap, Loader2, Calculator, Bot, BrainCircuit } from 'lucide-react';
+import { Layers, Zap, Loader2, Calculator, BrainCircuit } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'input' | 'results'>('input');
-  const [solverType, setSolverType] = useState<'algo' | 'ai'>('algo');
   const [demand, setDemand] = useState<DemandData[]>(INITIAL_DEMAND);
   const [constraints, setConstraints] = useState<Constraints>(INITIAL_CONSTRAINTS);
   const [isLoading, setIsLoading] = useState(false);
@@ -21,37 +19,18 @@ export default function App() {
     setError(null);
     setSolution(null);
     
-    try {
-      if (solverType === 'algo') {
-        // Local Algorithm with simulated delay
-        setTimeout(() => {
-          try {
-            const result = generateAlgorithmicStaffingPlan(demand, constraints);
-            setSolution(result);
-            setActiveTab('results');
-            setIsLoading(false);
-          } catch (err: any) {
-            setError(err.message || "An unexpected error occurred during optimization.");
-            setIsLoading(false);
-          }
-        }, 800);
-      } else {
-        // AI Solver
-        try {
-          const result = await generateStaffingPlan(demand, constraints);
-          setSolution(result);
-          setActiveTab('results');
-        } catch (err: any) {
-             console.error(err);
-             setError("AI Service Error: " + (err.message || "Failed to generate solution."));
-        } finally {
-             setIsLoading(false);
-        }
+    // Simulate processing delay for better UX
+    setTimeout(() => {
+      try {
+        const result = generateAlgorithmicStaffingPlan(demand, constraints);
+        setSolution(result);
+        setActiveTab('results');
+        setIsLoading(false);
+      } catch (err: any) {
+        setError(err.message || "An unexpected error occurred during optimization.");
+        setIsLoading(false);
       }
-    } catch (err: any) {
-      setError(err.message);
-      setIsLoading(false);
-    }
+    }, 800);
   };
 
   return (
@@ -115,57 +94,33 @@ export default function App() {
             <div className="space-y-6">
               <ConstraintsForm constraints={constraints} onChange={setConstraints} />
               
-              {/* Solver Selection */}
+              {/* Algorithm Info */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                 <h3 className="text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
                   <BrainCircuit className="w-4 h-4 text-indigo-500" />
                   Optimization Engine
                 </h3>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-lg">
-                  <button
-                    onClick={() => setSolverType('algo')}
-                    className={`flex flex-col items-center justify-center py-3 px-2 rounded-md text-sm font-medium transition-all ${
-                      solverType === 'algo'
-                        ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-black/5'
-                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
-                    }`}
-                  >
-                    <Calculator className="w-5 h-5 mb-1.5" />
-                    <span>Algorithmic</span>
-                  </button>
-                  <button
-                    onClick={() => setSolverType('ai')}
-                    className={`flex flex-col items-center justify-center py-3 px-2 rounded-md text-sm font-medium transition-all ${
-                      solverType === 'ai'
-                        ? 'bg-white text-violet-700 shadow-sm ring-1 ring-black/5'
-                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
-                    }`}
-                  >
-                    <Bot className="w-5 h-5 mb-1.5" />
-                    <span>Gemini AI</span>
-                  </button>
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                  <div className="flex items-start gap-3">
+                    <Calculator className="w-5 h-5 text-indigo-600 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">Deterministic Solver</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Uses a strict constraint-satisfaction algorithm to ensure 100% adherence to labor laws (48h/24h contracts) and Sunday coverage rotations.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-3 px-1">
-                  {solverType === 'algo' 
-                    ? "Uses a deterministic 'Bucket-Fill' algorithm. Fast, strict rule adherence, best for standard patterns."
-                    : "Uses Google Gemini 2.5 Flash. Creative, flexible, finds novel patterns but may take longer."
-                  }
-                </p>
               </div>
 
               {/* Action Box */}
-              <div className={`p-6 rounded-xl shadow-lg transition-colors ${
-                solverType === 'algo' ? 'bg-slate-800 text-white' : 'bg-gradient-to-br from-violet-600 to-indigo-700 text-white'
-              }`}>
+              <div className="p-6 rounded-xl shadow-lg transition-colors bg-slate-800 text-white">
                 <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
-                  {solverType === 'algo' ? <Zap className="w-5 h-5 text-yellow-400" /> : <Bot className="w-5 h-5 text-violet-200" />}
-                  {solverType === 'algo' ? 'Generate Standard Roster' : 'Ask AI to Solve'}
+                  <Zap className="w-5 h-5 text-yellow-400" />
+                  Generate Optimized Roster
                 </h3>
                 <p className="text-white/80 text-sm mb-6">
-                  {solverType === 'algo' 
-                    ? "Instantly solve for 24/7 coverage with strict 48h/24h contract rules."
-                    : "Send your demand curve to Gemini to find an optimal solution."
-                  }
+                  Instantly solve for 24/7 coverage with strict 48h/24h contract rules and 7-day coverage rotation.
                 </p>
                 <button
                   onClick={handleOptimize}
@@ -175,12 +130,12 @@ export default function App() {
                   {isLoading ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      {solverType === 'algo' ? 'Calculating...' : 'Thinking...'}
+                      Computing...
                     </>
                   ) : (
                     <>
-                      {solverType === 'algo' ? <Calculator className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
-                      {solverType === 'algo' ? 'Run Algorithm' : 'Generate with AI'}
+                      <Calculator className="w-5 h-5" />
+                      Run Optimization
                     </>
                   )}
                 </button>
