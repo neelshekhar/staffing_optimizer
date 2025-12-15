@@ -1,0 +1,5 @@
+{
+  "name": "StaffOptima - AI Workforce Planner",
+  "description": "An interactive staffing optimization tool that ingests demand curves and productivity constraints to generate optimal associate rosters, shift mixes, and utilization insights using Gemini AI.",
+  "requestFramePermissions": []
+}
