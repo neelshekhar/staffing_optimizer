@@ -4,7 +4,8 @@ import DemandInput from './components/DemandInput';
 import ConstraintsForm from './components/ConstraintsForm';
 import SolutionDashboard from './components/SolutionDashboard';
 import { generateAlgorithmicStaffingPlan } from './services/staffingAlgorithm';
-import { Layers, Zap, Loader2, Calculator, BrainCircuit } from 'lucide-react';
+import { generateORToolsStaffingPlan } from './services/orToolsSolver';
+import { Layers, Zap, Loader2, Calculator, BrainCircuit, Shuffle } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'input' | 'results'>('input');
@@ -13,6 +14,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [solution, setSolution] = useState<StaffingSolution | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [solverType, setSolverType] = useState<'greedy' | 'ortools'>('greedy');
 
   const handleOptimize = async () => {
     setIsLoading(true);
@@ -22,7 +24,13 @@ export default function App() {
     // Simulate processing delay for better UX
     setTimeout(() => {
       try {
-        const result = generateAlgorithmicStaffingPlan(demand, constraints);
+        let result: StaffingSolution;
+        if (solverType === 'ortools') {
+            result = generateORToolsStaffingPlan(demand, constraints);
+        } else {
+            result = generateAlgorithmicStaffingPlan(demand, constraints);
+            result.solverMethod = 'greedy';
+        }
         setSolution(result);
         setActiveTab('results');
         setIsLoading(false);
@@ -89,21 +97,40 @@ export default function App() {
                 weekendSpike={constraints.weekendSpike} 
               />
 
-              {/* Action Box - Moved Here */}
-              <div className="p-6 rounded-xl shadow-lg transition-colors bg-slate-800 text-white flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div>
+              {/* Action Box */}
+              <div className="p-6 rounded-xl shadow-lg transition-colors bg-slate-800 text-white flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="flex-1">
                   <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
                     <Zap className="w-5 h-5 text-yellow-400" />
                     Generate Optimized Roster
                   </h3>
-                  <p className="text-white/80 text-sm">
-                    Instantly solve for 24/7 coverage with strict 48h/24h contract rules.
+                  
+                  {/* Solver Toggle */}
+                  <div className="flex items-center gap-4 mt-3 bg-slate-900/50 p-2 rounded-lg border border-slate-700 w-fit">
+                    <button 
+                        onClick={() => setSolverType('greedy')}
+                        className={`text-xs px-3 py-1.5 rounded transition-all flex items-center gap-2 ${solverType === 'greedy' ? 'bg-indigo-600 text-white font-medium shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        <Calculator className="w-3 h-3" />
+                        Greedy Deterministic
+                    </button>
+                    <button 
+                        onClick={() => setSolverType('ortools')}
+                        className={`text-xs px-3 py-1.5 rounded transition-all flex items-center gap-2 ${solverType === 'ortools' ? 'bg-purple-600 text-white font-medium shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        <Shuffle className="w-3 h-3" />
+                        Pattern Solver (OR-Tools)
+                    </button>
+                  </div>
+                  <p className="text-slate-400 text-xs mt-2 italic">
+                     {solverType === 'greedy' ? 'Best for precise gap filling and strict efficiency.' : 'Best for consistent shift patterns and smoother rosters.'}
                   </p>
                 </div>
+
                 <button
                   onClick={handleOptimize}
                   disabled={isLoading}
-                  className="shrink-0 bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-md"
+                  className={`shrink-0 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-md min-w-[200px] ${solverType === 'ortools' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}
                 >
                   {isLoading ? (
                     <>
@@ -112,8 +139,8 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <Calculator className="w-5 h-5" />
-                      Run Optimization
+                      <BrainCircuit className="w-5 h-5" />
+                      Run {solverType === 'ortools' ? 'Pattern Solver' : 'Solver'}
                     </>
                   )}
                 </button>
@@ -128,15 +155,23 @@ export default function App() {
               <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                 <h3 className="text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
                   <BrainCircuit className="w-4 h-4 text-indigo-500" />
-                  Optimization Engine
+                  Selected Methodology
                 </h3>
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
                   <div className="flex items-start gap-3">
-                    <Calculator className="w-5 h-5 text-indigo-600 mt-0.5" />
+                    {solverType === 'greedy' ? (
+                         <Calculator className="w-5 h-5 text-indigo-600 mt-0.5" />
+                    ) : (
+                         <Shuffle className="w-5 h-5 text-purple-600 mt-0.5" />
+                    )}
                     <div>
-                      <p className="text-sm font-medium text-slate-900">Deterministic Solver</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {solverType === 'greedy' ? 'Deterministic Greedy' : 'Pattern-Based (OR-Tools)'}
+                      </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        Uses a strict constraint-satisfaction algorithm to ensure 100% adherence to labor laws (48h/24h contracts) and Sunday coverage rotations.
+                        {solverType === 'greedy' 
+                            ? 'Uses a strict constraint-satisfaction algorithm to adhere to labor laws (48h/24h) by filling demand blocks sequentially.' 
+                            : 'Uses a Hill-Climbing heuristic to fit pre-defined consistent shift patterns (SolveShiftScheduling) against the demand curve.'}
                       </p>
                     </div>
                   </div>

@@ -93,7 +93,10 @@ export const generateAlgorithmicStaffingPlan = (
   // --- Step 2: Construct Roster (Greedy Satisfaction) ---
   
   let safety = 0;
-  let offDayRotationIndex = 0; 
+  // Initialize rotation at 2 so the first off-day is Friday (index 4), 
+  // then Thu(3), Wed(2), Tue(1), Mon(0), Sun(6), Sat(5).
+  // This pushes weekend off-days to the end of the rotation cycle, maximizing weekend coverage for core staff.
+  let offDayRotationIndex = 2; 
 
   while (neededShifts.length > 0 && safety < 5000) {
     safety++;
@@ -300,7 +303,7 @@ export const generateAlgorithmicStaffingPlan = (
 
   const summary = `Optimization Strategy & Algorithmic Methodology:
 
-The model employs a deterministic greedy constraint satisfaction algorithm to optimize workforce allocation. It starts by discretizing demand into productivity-based "shift units," which are then tessellated into efficient 6-day (Full-Time) and Weekend Warrior rosters. A heuristic solver enforces strict adherence to 48-hour and 24-hour contract types while utilizing a dynamic rotation vector for weekly off-days to prevent Sunday coverage gaps. Finally, a post-processing logic layer promotes associates to Full-Time status where necessary to strictly adhere to the user-defined Part-Time (${constraints.partTimeCap}%) and Weekend Warrior (${constraints.weekendCap}%) mix caps.`;
+The model employs a deterministic greedy constraint satisfaction algorithm to optimize workforce allocation. It starts by discretizing demand into productivity-based "shift units," which are then tessellated into efficient 6-day (Full-Time) and Weekend Warrior rosters. A heuristic solver enforces strict adherence to 48-hour and 24-hour contract types while utilizing a dynamic rotation vector for weekly off-days to prevent both Saturday and Sunday coverage gaps. Finally, a post-processing logic layer promotes associates to Full-Time status where necessary to strictly adhere to the user-defined Part-Time (${constraints.partTimeCap}%) and Weekend Warrior (${constraints.weekendCap}%) mix caps.`;
 
   return {
     strategySummary: summary,

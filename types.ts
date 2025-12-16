@@ -35,6 +35,7 @@ export interface AssociateRoster {
 
 // The structure received from Gemini
 export interface StaffingSolution {
+  solverMethod?: 'greedy' | 'ortools'; // Added field
   strategySummary: string;
   weeklyStats: {
     totalVolume: number;
