@@ -259,22 +259,7 @@ export const generateAlgorithmicStaffingPlan = (
 
   const summary = `Optimization Strategy & Algorithmic Methodology:
 
-1. Demand Discretization & Capacity Tessellation:
-The algorithm transforms raw volume data into discrete "Shift Units" based on productivity constraints (Volume / Productivity). These units act as the fundamental atoms for roster construction.
-
-2. Greedy Constraint Satisfaction (6-Day Chains):
-A heuristic solver iterates through the shift pool to synthesize valid 6-day rosters. It employs a "Strict-Fill" logic: if a perfect 6-day chain matches the demand pattern, it is locked. If gaps exist (e.g., only 5 days of demand), the algorithm forces a "Ghost Shift" (Overstaffing) to strictly satisfy the 48-hour (FT) or 24-hour (PT) contract constraints.
-
-3. Dynamic Off-Day Rotation Vector:
-To prevent coverage gaps on specific days (specifically Sundays), the solver utilizes a rotational index (DayIndex + Rotation % 7). This ensures that "Weekly Offs" are distributed stochastically across the week rather than clustering on the tail-end of the array (Sunday), guaranteeing 7-day coverage.
-
-4. Residual Weekend Pairing:
-Any remaining demand fragments on Saturday and Sunday that could not be fitted into a 6-day rotation are strictly paired into "Weekend Warrior" roles. This adheres to the hard constraint that weekend-only staff must work both days.
-
-Outcome Metrics:
-- Roster Composition: ${ftCount} Full-Time, ${ptCount} Part-Time, ${wkCount} Weekend Warriors.
-- Contract Compliance: 100% (Strict 48h/24h enforcement).
-- Coverage: Active 7-day coverage via Vector Rotation.`;
+The model employs a deterministic greedy constraint satisfaction algorithm to optimize workforce allocation. It starts by discretizing demand into productivity-based "shift units," which are then tessellated into efficient 6-day (Full-Time) and Weekend Warrior rosters. A heuristic solver enforces strict adherence to 48-hour and 24-hour contract types while utilizing a dynamic rotation vector for weekly off-days to prevent Sunday coverage gaps. Finally, residual weekend spikes are absorbed by dedicated weekend-only shifts, ensuring a balanced 7-day coverage structure that maximizes intraday utilization while strictly adhering to defined labor guardrails and productivity targets.`;
 
   return {
     strategySummary: summary,

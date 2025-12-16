@@ -81,16 +81,46 @@ export default function App() {
 
         {activeTab === 'input' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-4 duration-500">
-            {/* Left Column: Inputs */}
+            {/* Left Column: Inputs & Generator Action */}
             <div className="lg:col-span-2 space-y-6">
               <DemandInput 
                 demand={demand} 
                 onChange={setDemand} 
                 weekendSpike={constraints.weekendSpike} 
               />
+
+              {/* Action Box - Moved Here */}
+              <div className="p-6 rounded-xl shadow-lg transition-colors bg-slate-800 text-white flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-yellow-400" />
+                    Generate Optimized Roster
+                  </h3>
+                  <p className="text-white/80 text-sm">
+                    Instantly solve for 24/7 coverage with strict 48h/24h contract rules.
+                  </p>
+                </div>
+                <button
+                  onClick={handleOptimize}
+                  disabled={isLoading}
+                  className="shrink-0 bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed backdrop-blur-sm"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Computing...
+                    </>
+                  ) : (
+                    <>
+                      <Calculator className="w-5 h-5" />
+                      Run Optimization
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
-            {/* Right Column: Constraints & Action */}
+            {/* Right Column: Constraints & Info */}
             <div className="space-y-6">
               <ConstraintsForm constraints={constraints} onChange={setConstraints} />
               
@@ -112,41 +142,16 @@ export default function App() {
                   </div>
                 </div>
               </div>
-
-              {/* Action Box */}
-              <div className="p-6 rounded-xl shadow-lg transition-colors bg-slate-800 text-white">
-                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-yellow-400" />
-                  Generate Optimized Roster
-                </h3>
-                <p className="text-white/80 text-sm mb-6">
-                  Instantly solve for 24/7 coverage with strict 48h/24h contract rules and 7-day coverage rotation.
-                </p>
-                <button
-                  onClick={handleOptimize}
-                  disabled={isLoading}
-                  className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed backdrop-blur-sm"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Computing...
-                    </>
-                  ) : (
-                    <>
-                      <Calculator className="w-5 h-5" />
-                      Run Optimization
-                    </>
-                  )}
-                </button>
-              </div>
-
             </div>
           </div>
         )}
 
         {activeTab === 'results' && solution && (
-          <SolutionDashboard solution={solution} />
+          <SolutionDashboard 
+            solution={solution} 
+            demand={demand}
+            constraints={constraints}
+          />
         )}
       </main>
     </div>

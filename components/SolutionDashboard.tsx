@@ -1,17 +1,18 @@
-
-import React, { useState } from 'react';
-import { StaffingSolution } from '../types';
+import React, { useState, useMemo } from 'react';
+import { StaffingSolution, DemandData, Constraints, TIME_BLOCKS, DayOfWeek } from '../types';
 import { 
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
-import { CheckCircle2, Users, Clock, CalendarDays, Download } from 'lucide-react';
+import { CheckCircle2, Users, Clock, CalendarDays, BarChart2, Activity, Zap, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface SolutionDashboardProps {
   solution: StaffingSolution;
+  demand: DemandData[];
+  constraints: Constraints;
 }
 
-const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution }) => {
-  const [view, setView] = useState<'overview' | 'roster'>('overview');
+const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand, constraints }) => {
+  const [view, setView] = useState<'overview' | 'roster' | 'heatmap'>('overview');
 
   const mixData = [
     { name: 'Full Time', value: solution.weeklyStats.mix.ft, color: '#3b82f6' },
@@ -19,7 +20,79 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution }) => {
     { name: 'Weekend Only', value: solution.weeklyStats.mix.weekend, color: '#f59e0b' },
   ].filter(d => d.value > 0);
 
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const days: DayOfWeek[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  // Calculate Heatmap Data
+  const heatmapData = useMemo(() => {
+    // 1. Initialize Supply Matrix
+    const supply: Record<string, Record<string, number>> = {};
+    days.forEach(d => {
+      supply[d] = {};
+      TIME_BLOCKS.forEach(b => supply[d][b] = 0);
+    });
+
+    // 2. Populate Supply from Roster
+    solution.roster.forEach(associate => {
+      days.forEach(day => {
+        const scheduleStr = associate.schedule[day];
+        if (scheduleStr === 'OFF') return;
+
+        // Parse start hour from "HH:00-HH:00"
+        const startHour = parseInt(scheduleStr.split(':')[0]);
+        // Map start hour to block index: (Start - 6) / 4
+        let blockIndex = -1;
+        if (startHour >= 6) blockIndex = (startHour - 6) / 4;
+        else if (startHour === 2) blockIndex = 5; // 02:00 is index 5
+        
+        if (blockIndex >= 0 && blockIndex < 6) {
+          // Add capacity to the starting block
+          supply[day][TIME_BLOCKS[blockIndex]] += 1;
+          
+          // If FT, they work 2 blocks (8 hours)
+          if (associate.role === 'Full Time') {
+             const nextBlockIndex = (blockIndex + 1) % 6;
+             supply[day][TIME_BLOCKS[nextBlockIndex]] += 1;
+          }
+        }
+      });
+    });
+
+    // 3. Calculate Utilization
+    const data: Record<string, Record<string, { percent: number; volume: number; capacity: number }>> = {};
+    
+    days.forEach((day, dayIdx) => {
+      data[day] = {};
+      const dayDemand = demand[dayIdx];
+      
+      TIME_BLOCKS.forEach(block => {
+        const volume = dayDemand.blocks[block];
+        const heads = supply[day][block];
+        const capacity = heads * constraints.avgProductivity * 4; // 4 hour block
+        
+        let percent = 0;
+        if (volume === 0) percent = 0;
+        else if (capacity === 0) percent = 999; // Infinite/Error
+        else percent = Math.round((volume / capacity) * 100);
+
+        data[day][block] = { percent, volume, capacity };
+      });
+    });
+
+    return data;
+  }, [solution, demand, constraints]);
+
+  // Updated Thresholds: 90-110% is Optimal
+  const getHeatmapColor = (util: number) => {
+    if (util === 999) return 'bg-red-600 text-white'; // Uncovered
+    if (util > 110) return 'bg-red-500 text-white'; // Understaffed (>110%)
+    if (util >= 90) return 'bg-emerald-500 text-white'; // Optimal (90-110%)
+    if (util >= 70) return 'bg-blue-400 text-white'; // Safe/Relaxed (70-89%)
+    if (util > 0) return 'bg-blue-200 text-slate-700'; // Overstaffed (<70%)
+    return 'bg-slate-100 text-slate-400'; // No volume
+  };
+
+  const totalWeeklyHours = solution.roster.reduce((acc, r) => acc + r.totalHours, 0);
+  const requiredHours = solution.weeklyStats.totalVolume / constraints.avgProductivity;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
@@ -34,6 +107,14 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution }) => {
             }`}
           >
             Overview & Stats
+          </button>
+          <button
+            onClick={() => setView('heatmap')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              view === 'heatmap' ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            Utilization Heatmap
           </button>
           <button
             onClick={() => setView('roster')}
@@ -61,7 +142,7 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution }) => {
                 <span className="text-sm font-medium text-slate-600">Total Hours</span>
               </div>
               <div className="text-2xl font-bold text-slate-900">
-                {solution.roster.reduce((acc, r) => acc + r.totalHours, 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">hrs/wk</span>
+                {totalWeeklyHours.toLocaleString()} <span className="text-sm font-normal text-slate-400">hrs/wk</span>
               </div>
             </div>
 
@@ -135,6 +216,131 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution }) => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {view === 'heatmap' && (
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+          
+          <div className="flex flex-col gap-4 mb-6">
+             <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                   <BarChart2 className="w-5 h-5 text-indigo-600" />
+                   <h3 className="text-lg font-semibold text-slate-800">Intra-Day Utilization Heatmap</h3>
+                </div>
+                <div className="text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 inline-block w-fit">
+                    Cell Format: <strong>% Utilization (Order Volume / Processing Capacity)</strong>
+                </div>
+             </div>
+
+             {/* Deep Dive Section */}
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 rounded-lg p-4 border border-slate-100">
+                {/* 1. Hours Analysis */}
+                <div className="space-y-3">
+                   <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                     <Clock className="w-4 h-4 text-indigo-600" /> Labor Hours Analysis
+                   </h4>
+                   <div className="space-y-2 text-sm bg-white p-3 rounded border border-slate-100">
+                     <div className="flex justify-between items-center">
+                       <span className="text-slate-500 text-xs uppercase font-medium">Demand Required</span>
+                       <span className="font-semibold text-slate-800">{Math.round(requiredHours).toLocaleString()} hrs</span>
+                     </div>
+                     <div className="flex justify-between items-center">
+                       <span className="text-slate-500 text-xs uppercase font-medium">Roster Available</span>
+                       <span className="font-semibold text-slate-800">{totalWeeklyHours.toLocaleString()} hrs</span>
+                     </div>
+                     <div className="h-px bg-slate-100 my-1"></div>
+                     <div className="flex justify-between items-center">
+                       <span className="text-slate-500 text-xs uppercase font-medium">Net Utilization</span>
+                       <span className={`font-bold ${solution.weeklyStats.blendedUtilization > 110 ? 'text-red-600' : 'text-emerald-600'}`}>
+                         {solution.weeklyStats.blendedUtilization.toFixed(1)}%
+                       </span>
+                     </div>
+                   </div>
+                </div>
+
+                {/* 2. Methodology Commentary */}
+                <div className="space-y-3">
+                   <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                     <Zap className="w-4 h-4 text-amber-500" /> Staffing Methodology
+                   </h4>
+                   <div className="text-xs text-slate-600 bg-white p-3 rounded border border-slate-100 h-[106px] overflow-y-auto leading-relaxed">
+                     <p>This recommendation is built <strong>bottoms-up</strong> using a deterministic solver.</p>
+                     <ul className="list-disc pl-4 mt-2 space-y-1">
+                       <li>Core base loaded with 48h Full-Time contracts.</li>
+                       <li>Peaks smoothed using 24h Part-Time shifts.</li>
+                       <li><strong>Weekend Warriors</strong> deployed specifically to manage the +{constraints.weekendSpike}% weekend volume spike without inflating weekday costs.</li>
+                     </ul>
+                   </div>
+                </div>
+
+                {/* 3. Scenario Planning Guide */}
+                <div className="space-y-3">
+                   <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                     <Activity className="w-4 h-4 text-emerald-600" /> Scenario Planning Guide
+                   </h4>
+                   <div className="space-y-2 text-xs">
+                     <div className="bg-white p-2 rounded border border-slate-100 flex items-start gap-2">
+                        <TrendingUp className="w-4 h-4 text-red-500 shrink-0" />
+                        <div>
+                          <span className="font-bold text-slate-700 block">Stretched Roster (Lower Cost)</span>
+                          <span className="text-slate-500">Increase <strong>Target Utilization</strong> input to &gt;110% to force leaner staffing.</span>
+                        </div>
+                     </div>
+                     <div className="bg-white p-2 rounded border border-slate-100 flex items-start gap-2">
+                        <TrendingDown className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <div>
+                          <span className="font-bold text-slate-700 block">Safe Roster (Buffer)</span>
+                          <span className="text-slate-500">Decrease <strong>Target Utilization</strong> input to &lt;90% to build in safety stock.</span>
+                        </div>
+                     </div>
+                   </div>
+                </div>
+             </div>
+          </div>
+          
+          <div className="flex justify-end gap-4 mb-4 text-xs font-medium text-slate-600 flex-wrap border-t border-slate-100 pt-4">
+            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded"></div> Optimal (90-110%)</div>
+            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-400 rounded"></div> Relaxed (70-89%)</div>
+            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-200 rounded"></div> Low (&lt;70%)</div>
+            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Understaffed (&gt;110%)</div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr>
+                  <th className="p-3 bg-slate-50 border border-slate-200 text-slate-500 font-medium">Day</th>
+                  {TIME_BLOCKS.map(block => (
+                    <th key={block} className="p-3 bg-slate-50 border border-slate-200 text-center text-slate-500 font-medium min-w-[120px]">
+                      {block}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {days.map(day => (
+                  <tr key={day}>
+                    <td className="p-3 border border-slate-200 font-semibold text-slate-700 bg-slate-50">{day}</td>
+                    {TIME_BLOCKS.map(block => {
+                      const { percent, volume, capacity } = heatmapData[day][block];
+                      return (
+                        <td key={`${day}-${block}`} className={`p-2 border border-white text-center transition-colors ${getHeatmapColor(percent)}`}>
+                           <div className="flex flex-col items-center justify-center h-full">
+                                <span className="font-bold text-sm leading-tight">{percent === 999 ? 'GAP' : `${percent}%`}</span>
+                                <span className="text-[10px] opacity-80 font-medium whitespace-nowrap leading-tight">({volume.toLocaleString()} / {capacity.toLocaleString()})</span>
+                           </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-400 mt-4 italic">
+            * Utilization = Order Volume / (Scheduled Staff * Productivity * 4hrs). Capacity calculated based on rostered headcount for the block.
+          </p>
         </div>
       )}
 

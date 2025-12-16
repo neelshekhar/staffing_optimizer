@@ -61,14 +61,14 @@ const createEmptyDay = (day: DayOfWeek): DemandData => ({
   }
 });
 
-// Updated defaults: 600, 400, 400, 800, 600, 200
+// Updated defaults: 300, 200, 200, 400, 300, 300
 const DEFAULT_BLOCKS = { 
-  '06:00-10:00': 600, 
-  '10:00-14:00': 400, 
-  '14:00-18:00': 400, 
-  '18:00-22:00': 800, 
-  '22:00-02:00': 600, 
-  '02:00-06:00': 200 
+  '06:00-10:00': 300, 
+  '10:00-14:00': 200, 
+  '14:00-18:00': 200, 
+  '18:00-22:00': 400, 
+  '22:00-02:00': 300, 
+  '02:00-06:00': 300 
 };
 
 export const INITIAL_DEMAND: DemandData[] = [
@@ -82,7 +82,7 @@ export const INITIAL_DEMAND: DemandData[] = [
 ];
 
 export const INITIAL_CONSTRAINTS: Constraints = {
-  avgProductivity: 15, // items picked per hour per person (Updated default)
+  avgProductivity: 7, // items picked per hour per person (Updated default)
   targetUtilization: 100, // 100% utilization target (Updated default)
   minWeeklyOffs: 1,
   weekendSpike: 30, 
