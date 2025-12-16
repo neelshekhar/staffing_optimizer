@@ -154,6 +154,13 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Footer */}
+      <footer className="py-6 px-4 sm:px-6 lg:px-8 mt-auto">
+         <div className="max-w-7xl mx-auto w-full">
+            <p className="text-slate-200 text-xs font-medium">neelshekhar</p>
+         </div>
+      </footer>
     </div>
   );
 }
