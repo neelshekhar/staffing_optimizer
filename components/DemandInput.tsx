@@ -62,7 +62,7 @@ const DemandInput: React.FC<DemandInputProps> = ({ demand, onChange, weekendSpik
         <button 
           onClick={copyMondayToAll}
           title={`Copies Monday's data to all days, applying a ${weekendSpike}% increase to Sat/Sun.`}
-          className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md transition-colors font-medium border border-slate-200"
+          className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded-md transition-colors font-medium border border-yellow-200"
         >
           <Copy className="w-3 h-3" />
           Copy Mon to All (+{weekendSpike}% on Wknd)

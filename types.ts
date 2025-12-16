@@ -85,11 +85,11 @@ export const INITIAL_DEMAND: DemandData[] = [
 
 export const INITIAL_CONSTRAINTS: Constraints = {
   avgProductivity: 7, // items picked per hour per person (Updated default)
-  targetUtilization: 100, // 100% utilization target (Updated default)
+  targetUtilization: 105, // 105% utilization target (Updated default)
   minWeeklyOffs: 1,
   weekendSpike: 30, 
-  partTimeCap: 20, // 20% of FT
-  weekendCap: 10, // 10% of FT
+  partTimeCap: 30, // 30% of FT
+  weekendCap: 30, // 30% of FT
 };
 
 export const TIME_BLOCKS: TimeBlock[] = [
