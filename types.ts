@@ -21,6 +21,8 @@ export interface Constraints {
   targetUtilization: number; // percentage (e.g., 0.85)
   minWeeklyOffs: number; // e.g., 1 or 2
   weekendSpike: number; // percentage multiplier perception (informational)
+  partTimeCap: number; // Max PT as % of FT
+  weekendCap: number; // Max Weekend as % of FT
 }
 
 export interface AssociateRoster {
@@ -86,6 +88,8 @@ export const INITIAL_CONSTRAINTS: Constraints = {
   targetUtilization: 100, // 100% utilization target (Updated default)
   minWeeklyOffs: 1,
   weekendSpike: 30, 
+  partTimeCap: 20, // 20% of FT
+  weekendCap: 10, // 10% of FT
 };
 
 export const TIME_BLOCKS: TimeBlock[] = [

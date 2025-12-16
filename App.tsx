@@ -103,7 +103,7 @@ export default function App() {
                 <button
                   onClick={handleOptimize}
                   disabled={isLoading}
-                  className="shrink-0 bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed backdrop-blur-sm"
+                  className="shrink-0 bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-md"
                 >
                   {isLoading ? (
                     <>

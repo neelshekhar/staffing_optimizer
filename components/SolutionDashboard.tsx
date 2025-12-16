@@ -3,7 +3,7 @@ import { StaffingSolution, DemandData, Constraints, TIME_BLOCKS, DayOfWeek } fro
 import { 
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
-import { CheckCircle2, Users, Clock, CalendarDays, BarChart2, Activity, Zap, TrendingUp, TrendingDown } from 'lucide-react';
+import { CheckCircle2, Users, Clock, CalendarDays, BarChart2, Activity, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface SolutionDashboardProps {
   solution: StaffingSolution;
@@ -57,36 +57,41 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
       });
     });
 
-    // 3. Calculate Utilization
-    const data: Record<string, Record<string, { percent: number; volume: number; capacity: number }>> = {};
+    // 3. Calculate Utilization (Now in Hours)
+    const data: Record<string, Record<string, { percent: number; reqHours: number; availHours: number }>> = {};
     
     days.forEach((day, dayIdx) => {
       data[day] = {};
       const dayDemand = demand[dayIdx];
       
       TIME_BLOCKS.forEach(block => {
-        const volume = dayDemand.blocks[block];
-        const heads = supply[day][block];
-        const capacity = heads * constraints.avgProductivity * 4; // 4 hour block
+        const volume = dayDemand.blocks[block]; // Orders
+        const heads = supply[day][block]; // Headcount
+        
+        // Convert Volume to Required Hours
+        const reqHours = constraints.avgProductivity > 0 ? volume / constraints.avgProductivity : 0;
+        
+        // Calculate Available Hours (Headcount * 4hr block)
+        const availHours = heads * 4; 
         
         let percent = 0;
-        if (volume === 0) percent = 0;
-        else if (capacity === 0) percent = 999; // Infinite/Error
-        else percent = Math.round((volume / capacity) * 100);
+        if (reqHours === 0) percent = 0;
+        else if (availHours === 0) percent = 999; // Infinite/Error
+        else percent = Math.round((reqHours / availHours) * 100);
 
-        data[day][block] = { percent, volume, capacity };
+        data[day][block] = { percent, reqHours, availHours };
       });
     });
 
     return data;
   }, [solution, demand, constraints]);
 
-  // Updated Thresholds: 90-110% is Optimal
+  // Updated Thresholds: 85-110% is Optimal
   const getHeatmapColor = (util: number) => {
     if (util === 999) return 'bg-red-600 text-white'; // Uncovered
     if (util > 110) return 'bg-red-500 text-white'; // Understaffed (>110%)
-    if (util >= 90) return 'bg-emerald-500 text-white'; // Optimal (90-110%)
-    if (util >= 70) return 'bg-blue-400 text-white'; // Safe/Relaxed (70-89%)
+    if (util >= 85) return 'bg-emerald-500 text-white'; // Optimal (85-110%)
+    if (util >= 70) return 'bg-blue-400 text-white'; // Safe/Relaxed (70-84%)
     if (util > 0) return 'bg-blue-200 text-slate-700'; // Overstaffed (<70%)
     return 'bg-slate-100 text-slate-400'; // No volume
   };
@@ -229,79 +234,67 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                    <h3 className="text-lg font-semibold text-slate-800">Intra-Day Utilization Heatmap</h3>
                 </div>
                 <div className="text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 inline-block w-fit">
-                    Cell Format: <strong>% Utilization (Order Volume / Processing Capacity)</strong>
+                    Cell Format: <strong>% Utilization (Required Hours / Available Hours)</strong>
                 </div>
              </div>
 
              {/* Deep Dive Section */}
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 rounded-lg p-4 border border-slate-100">
-                {/* 1. Hours Analysis */}
-                <div className="space-y-3">
-                   <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
-                     <Clock className="w-4 h-4 text-indigo-600" /> Labor Hours Analysis
-                   </h4>
-                   <div className="space-y-2 text-sm bg-white p-3 rounded border border-slate-100">
-                     <div className="flex justify-between items-center">
-                       <span className="text-slate-500 text-xs uppercase font-medium">Demand Required</span>
-                       <span className="font-semibold text-slate-800">{Math.round(requiredHours).toLocaleString()} hrs</span>
-                     </div>
-                     <div className="flex justify-between items-center">
-                       <span className="text-slate-500 text-xs uppercase font-medium">Roster Available</span>
-                       <span className="font-semibold text-slate-800">{totalWeeklyHours.toLocaleString()} hrs</span>
-                     </div>
-                     <div className="h-px bg-slate-100 my-1"></div>
-                     <div className="flex justify-between items-center">
-                       <span className="text-slate-500 text-xs uppercase font-medium">Net Utilization</span>
-                       <span className={`font-bold ${solution.weeklyStats.blendedUtilization > 110 ? 'text-red-600' : 'text-emerald-600'}`}>
-                         {solution.weeklyStats.blendedUtilization.toFixed(1)}%
-                       </span>
-                     </div>
-                   </div>
-                </div>
+             <div className="bg-slate-50 rounded-lg p-4 border border-slate-100">
+                {/* Row 1: Hours Analysis & Scenarios (2 Columns) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* 1. Hours Analysis */}
+                    <div className="space-y-3">
+                       <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                         <Clock className="w-4 h-4 text-indigo-600" /> Labor Hours Analysis
+                       </h4>
+                       <div className="space-y-2 text-sm bg-white p-3 rounded border border-slate-100 h-full">
+                         <div className="flex justify-between items-center">
+                           <span className="text-slate-500 text-xs uppercase font-medium">Demand Required</span>
+                           <span className="font-semibold text-slate-800">{Math.round(requiredHours).toLocaleString()} hrs</span>
+                         </div>
+                         <div className="flex justify-between items-center">
+                           <span className="text-slate-500 text-xs uppercase font-medium">Roster Available</span>
+                           <span className="font-semibold text-slate-800">{totalWeeklyHours.toLocaleString()} hrs</span>
+                         </div>
+                         <div className="h-px bg-slate-100 my-1"></div>
+                         <div className="flex justify-between items-center">
+                           <span className="text-slate-500 text-xs uppercase font-medium">Net Utilization</span>
+                           <span className={`font-bold ${solution.weeklyStats.blendedUtilization > 110 ? 'text-red-600' : 'text-emerald-600'}`}>
+                             {solution.weeklyStats.blendedUtilization.toFixed(1)}%
+                           </span>
+                         </div>
+                       </div>
+                    </div>
 
-                {/* 2. Methodology Commentary */}
-                <div className="space-y-3">
-                   <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
-                     <Zap className="w-4 h-4 text-amber-500" /> Staffing Methodology
-                   </h4>
-                   <div className="text-xs text-slate-600 bg-white p-3 rounded border border-slate-100 h-[106px] overflow-y-auto leading-relaxed">
-                     <p>This recommendation is built <strong>bottoms-up</strong> using a deterministic solver.</p>
-                     <ul className="list-disc pl-4 mt-2 space-y-1">
-                       <li>Core base loaded with 48h Full-Time contracts.</li>
-                       <li>Peaks smoothed using 24h Part-Time shifts.</li>
-                       <li><strong>Weekend Warriors</strong> deployed specifically to manage the +{constraints.weekendSpike}% weekend volume spike without inflating weekday costs.</li>
-                     </ul>
-                   </div>
-                </div>
-
-                {/* 3. Scenario Planning Guide */}
-                <div className="space-y-3">
-                   <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
-                     <Activity className="w-4 h-4 text-emerald-600" /> Scenario Planning Guide
-                   </h4>
-                   <div className="space-y-2 text-xs">
-                     <div className="bg-white p-2 rounded border border-slate-100 flex items-start gap-2">
-                        <TrendingUp className="w-4 h-4 text-red-500 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-700 block">Stretched Roster (Lower Cost)</span>
-                          <span className="text-slate-500">Increase <strong>Target Utilization</strong> input to &gt;110% to force leaner staffing.</span>
-                        </div>
-                     </div>
-                     <div className="bg-white p-2 rounded border border-slate-100 flex items-start gap-2">
-                        <TrendingDown className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-700 block">Safe Roster (Buffer)</span>
-                          <span className="text-slate-500">Decrease <strong>Target Utilization</strong> input to &lt;90% to build in safety stock.</span>
-                        </div>
-                     </div>
-                   </div>
+                    {/* 2. Scenario Planning Guide */}
+                    <div className="space-y-3">
+                       <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                         <Activity className="w-4 h-4 text-emerald-600" /> Scenario Planning Guide
+                       </h4>
+                       <div className="space-y-2 text-xs h-full">
+                         <div className="bg-white p-2.5 rounded border border-slate-100 flex items-start gap-2 h-[48%]">
+                            <TrendingUp className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-bold text-slate-700 block">Stretched Roster (Lower Cost)</span>
+                              <span className="text-slate-500">Increase <strong>Target Utilization</strong> input to &gt;110% to force leaner staffing.</span>
+                            </div>
+                         </div>
+                         <div className="bg-white p-2.5 rounded border border-slate-100 flex items-start gap-2 h-[48%]">
+                            <TrendingDown className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-bold text-slate-700 block">Safe Roster (Buffer)</span>
+                              <span className="text-slate-500">Decrease <strong>Target Utilization</strong> input to &lt;85% to build in safety stock.</span>
+                            </div>
+                         </div>
+                       </div>
+                    </div>
                 </div>
              </div>
           </div>
           
           <div className="flex justify-end gap-4 mb-4 text-xs font-medium text-slate-600 flex-wrap border-t border-slate-100 pt-4">
-            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded"></div> Optimal (90-110%)</div>
-            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-400 rounded"></div> Relaxed (70-89%)</div>
+            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded"></div> Optimal (85-110%)</div>
+            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-400 rounded"></div> Relaxed (70-84%)</div>
             <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-200 rounded"></div> Low (&lt;70%)</div>
             <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Understaffed (&gt;110%)</div>
           </div>
@@ -323,12 +316,12 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                   <tr key={day}>
                     <td className="p-3 border border-slate-200 font-semibold text-slate-700 bg-slate-50">{day}</td>
                     {TIME_BLOCKS.map(block => {
-                      const { percent, volume, capacity } = heatmapData[day][block];
+                      const { percent, reqHours, availHours } = heatmapData[day][block];
                       return (
                         <td key={`${day}-${block}`} className={`p-2 border border-white text-center transition-colors ${getHeatmapColor(percent)}`}>
                            <div className="flex flex-col items-center justify-center h-full">
                                 <span className="font-bold text-sm leading-tight">{percent === 999 ? 'GAP' : `${percent}%`}</span>
-                                <span className="text-[10px] opacity-80 font-medium whitespace-nowrap leading-tight">({volume.toLocaleString()} / {capacity.toLocaleString()})</span>
+                                <span className="text-[10px] opacity-80 font-medium whitespace-nowrap leading-tight">({Math.round(reqHours)} / {availHours})</span>
                            </div>
                         </td>
                       );
@@ -339,7 +332,7 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
             </table>
           </div>
           <p className="text-xs text-slate-400 mt-4 italic">
-            * Utilization = Order Volume / (Scheduled Staff * Productivity * 4hrs). Capacity calculated based on rostered headcount for the block.
+            * Utilization = Required Hours (Demand/Prod) / Available Roster Hours.
           </p>
         </div>
       )}

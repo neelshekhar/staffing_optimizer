@@ -78,15 +78,6 @@ export const generateAlgorithmicStaffingPlan = (
     return null;
   };
 
-  // Helper to find seed shift. Prioritize Weekend to clear "Weekend Warrior" candidates first?
-  // Actually, to solve the "Sunday Empty" issue, we need to treat Sunday as a normal day for 6-day workers 
-  // OR strictly preserve it for Weekend Warriors.
-  // The user says "Weekend volumes are 30% higher".
-  // This implies we need BOTH: 6-day workers covering Sunday AND Weekend Warriors covering the spike.
-  
-  // Sort shifts to prioritize:
-  // 1. Weekend Shifts (to ensure they are seen)
-  // 2. Weekday Shifts
   const sortShifts = () => {
      neededShifts.sort((a, b) => {
       // Prioritize weekend
@@ -99,10 +90,9 @@ export const generateAlgorithmicStaffingPlan = (
   };
 
 
-  // --- Step 2: Construct Roster ---
+  // --- Step 2: Construct Roster (Greedy Satisfaction) ---
   
   let safety = 0;
-  // Rotation counter to ensure we don't always drop the same day (Sunday) when all days are available
   let offDayRotationIndex = 0; 
 
   while (neededShifts.length > 0 && safety < 5000) {
@@ -113,7 +103,6 @@ export const generateAlgorithmicStaffingPlan = (
     
     // Check availability for this BlockIndex & Type across the week
     const availabilityByDay = Array(7).fill(false);
-    // Also count magnitude of availability
     const countsByDay = Array(7).fill(0);
     
     neededShifts.forEach(s => {
@@ -127,48 +116,22 @@ export const generateAlgorithmicStaffingPlan = (
 
     let assigned = false;
 
-    // STRATEGY A: 6-Day Roster (Strict 48h / 24h)
-    // We attempt this if we have decent availability OR if it's a Weekday seed.
-    // If it's a Weekend seed, we prefer Strategy B (Weekend Warrior) ONLY if availability is low (<3 days).
-    // If availability is high (e.g. 7 days have demand), we should make a 6-day worker!
-    
+    // STRATEGY A: 6-Day Roster
     if (daysAvailableCount >= 3 || seed.dayIndex < 5) {
       const workDaysSet = new Set<number>();
-
-      // 1. Identify potential work days
       const daysWithCounts = countsByDay.map((count, idx) => ({ idx, count }));
       
-      // Filter only available days first? No, we might overstaff.
-      
-      // Sort logic to determine which 6 days to pick.
-      // WE MUST NOT ALWAYS DROP SUNDAY (Index 6).
-      // Logic:
-      // - Primary: Pick days with highest count (most demand).
-      // - Tie-breaker: Use `offDayRotationIndex` to rotate the "dropped" day among ties.
-      
       daysWithCounts.sort((a, b) => {
-        if (b.count !== a.count) return b.count - a.count; // Descending count
-        
-        // Tie-breaker:
-        // We want to drop a different day each time.
-        // We are selecting TOP 6. The one at index 6 (last) is dropped.
-        // To rotate, we can manipulate the sort value based on index relative to rotation.
-        // Simple rotation: Prefer indices that are (index + rotation) % 7?
-        
+        if (b.count !== a.count) return b.count - a.count;
         const distA = (a.idx + offDayRotationIndex) % 7;
         const distB = (b.idx + offDayRotationIndex) % 7;
         return distA - distB; 
       });
 
-      // Increment rotation for next associate
       offDayRotationIndex++; 
-
-      // Take top 6
       const selected = daysWithCounts.slice(0, 6);
       selected.forEach(x => workDaysSet.add(x.idx));
 
-      // Ensure we have 6 days (if we had < 6 days with counts > 0, we took zeros, which is correct for overstaffing)
-      
       const newAssociate: AssociateRoster = {
         id: generateId(),
         name: 'Temp',
@@ -194,9 +157,8 @@ export const generateAlgorithmicStaffingPlan = (
       assigned = true;
     }
 
-    // STRATEGY B: Weekend Warrior (Strict Sat+Sun)
+    // STRATEGY B: Weekend Warrior
     if (!assigned) {
-      // Force Sat+Sun
       const newAssociate: AssociateRoster = {
         id: generateId(),
         name: 'Temp',
@@ -230,7 +192,86 @@ export const generateAlgorithmicStaffingPlan = (
     }
   }
 
-  // --- Step 3: Sort & Rename ---
+  // --- Step 3: Enforce Mix Constraints (Post-Process Promotions) ---
+  
+  // 3a. Enforce PT Cap (Convert excess PT -> FT)
+  while (true) {
+    const ftCount = roster.filter(r => r.role === 'Full Time').length;
+    const ptCount = roster.filter(r => r.role === 'Part Time').length;
+    
+    const ptLimit = Math.ceil(ftCount * (constraints.partTimeCap / 100));
+    
+    if (ptCount <= ptLimit) break;
+    if (ptCount === 0) break; 
+
+    // Find a PT candidate to promote (e.g., the one with most hours, or just the first)
+    const candidateIdx = roster.findIndex(r => r.role === 'Part Time');
+    if (candidateIdx === -1) break;
+
+    const candidate = roster[candidateIdx];
+    candidate.role = 'Full Time';
+    
+    // Upgrade their shifts: 4h -> 9h(8h work)
+    // We assume the PT block index is inferred from their start time
+    Object.keys(candidate.schedule).forEach(k => {
+      const day = k as DayOfWeek;
+      const shift = candidate.schedule[day];
+      if (shift !== 'OFF') {
+        const startHour = parseInt(shift.split(':')[0]);
+        // Re-calc block index
+        let blockIndex = -1;
+        if (startHour >= 6) blockIndex = (startHour - 6) / 4;
+        else if (startHour === 2) blockIndex = 5;
+        
+        if (blockIndex !== -1) {
+            candidate.schedule[day] = formatShiftTime(blockIndex, 'FT');
+            candidate.totalHours += 4; // Add 4 hours (4->8)
+        }
+      }
+    });
+  }
+
+  // 3b. Enforce Weekend Warrior Cap (Convert excess WW -> FT)
+  while (true) {
+    const ftCount = roster.filter(r => r.role === 'Full Time').length;
+    const wkCount = roster.filter(r => r.role === 'Weekend Warrior').length;
+    
+    const wkLimit = Math.ceil(ftCount * (constraints.weekendCap / 100));
+    
+    if (wkCount <= wkLimit) break;
+    if (wkCount === 0) break;
+
+    const candidateIdx = roster.findIndex(r => r.role === 'Weekend Warrior');
+    if (candidateIdx === -1) break;
+
+    const candidate = roster[candidateIdx];
+    candidate.role = 'Full Time';
+    
+    // Upgrade: Keep Sat/Sun as FT (8h), Add Mon-Thu as FT (8h)
+    // Get Sat block info to reuse start time
+    let blockIndex = 0; // default
+    const satShift = candidate.schedule['Sat'];
+    if (satShift !== 'OFF') {
+        const startHour = parseInt(satShift.split(':')[0]);
+        if (startHour >= 6) blockIndex = (startHour - 6) / 4;
+        else if (startHour === 2) blockIndex = 5;
+    }
+
+    const ftTime = formatShiftTime(blockIndex, 'FT');
+    
+    // Assign 6 days (Mon-Thu + Sat/Sun)
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Sat', 'Sun'].forEach(d => {
+         const day = d as DayOfWeek;
+         candidate.schedule[day] = ftTime;
+    });
+    candidate.schedule['Fri'] = 'OFF';
+    
+    // Recalculate hours (6 days * 8 hours = 48)
+    candidate.totalHours = 48; 
+  }
+
+
+  // --- Step 4: Sort & Rename ---
   const rolePriority: Record<string, number> = { 
     'Full Time': 1, 
     'Part Time': 2, 
@@ -247,7 +288,7 @@ export const generateAlgorithmicStaffingPlan = (
     associate.name = `Associate ${index + 1}`;
   });
 
-  // --- Step 4: Stats ---
+  // --- Step 5: Stats ---
   const totalVolume = demandData.reduce((sum, d) => sum + Object.values(d.blocks).reduce((a, b) => a + b, 0), 0);
   const totalHours = roster.reduce((sum, a) => sum + a.totalHours, 0);
   const requiredHours = totalVolume / constraints.avgProductivity;
@@ -259,7 +300,7 @@ export const generateAlgorithmicStaffingPlan = (
 
   const summary = `Optimization Strategy & Algorithmic Methodology:
 
-The model employs a deterministic greedy constraint satisfaction algorithm to optimize workforce allocation. It starts by discretizing demand into productivity-based "shift units," which are then tessellated into efficient 6-day (Full-Time) and Weekend Warrior rosters. A heuristic solver enforces strict adherence to 48-hour and 24-hour contract types while utilizing a dynamic rotation vector for weekly off-days to prevent Sunday coverage gaps. Finally, residual weekend spikes are absorbed by dedicated weekend-only shifts, ensuring a balanced 7-day coverage structure that maximizes intraday utilization while strictly adhering to defined labor guardrails and productivity targets.`;
+The model employs a deterministic greedy constraint satisfaction algorithm to optimize workforce allocation. It starts by discretizing demand into productivity-based "shift units," which are then tessellated into efficient 6-day (Full-Time) and Weekend Warrior rosters. A heuristic solver enforces strict adherence to 48-hour and 24-hour contract types while utilizing a dynamic rotation vector for weekly off-days to prevent Sunday coverage gaps. Finally, a post-processing logic layer promotes associates to Full-Time status where necessary to strictly adhere to the user-defined Part-Time (${constraints.partTimeCap}%) and Weekend Warrior (${constraints.weekendCap}%) mix caps.`;
 
   return {
     strategySummary: summary,
@@ -273,7 +314,7 @@ The model employs a deterministic greedy constraint satisfaction algorithm to op
     recommendations: [
       "Week Offs are rotated to ensure Sunday coverage.",
       "Strict 48h (FT) and 24h (PT) contracts are enforced.",
-      "Weekend Warriors cover surplus spikes."
+      `Mix Caps Enforced: PT <= ${constraints.partTimeCap}% FT, Weekend <= ${constraints.weekendCap}% FT.`
     ]
   };
 };
