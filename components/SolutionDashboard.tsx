@@ -225,26 +225,33 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                 ))}
               </ul>
             </div>
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2 w-full text-left">Headcount Mix</h3>
-              <div className="w-full h-48">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center">
+              <h3 className="text-sm font-semibold text-slate-800 mb-4 w-full text-left">Headcount Mix</h3>
+              <div className="w-full h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={mixData}
                       cx="50%"
-                      cy="50%"
-                      innerRadius={40}
-                      outerRadius={70}
-                      paddingAngle={5}
+                      cy="45%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={2}
                       dataKey="value"
                     >
                       {mixData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
+                        <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
                       ))}
                     </Pie>
-                    <Tooltip />
-                    <Legend verticalAlign="bottom" height={36} iconSize={8} wrapperStyle={{ fontSize: '12px' }}/>
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} 
+                    />
+                    <Legend 
+                      verticalAlign="bottom" 
+                      align="center"
+                      iconSize={10} 
+                      wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

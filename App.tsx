@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { INITIAL_CONSTRAINTS, INITIAL_DEMAND, Constraints, DemandData, StaffingSolution } from './types';
 import DemandInput from './components/DemandInput';
@@ -82,7 +83,7 @@ export default function App() {
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {error && (
             <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
                 {error}
             </div>
         )}
@@ -191,10 +192,19 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="py-6 px-4 sm:px-6 lg:px-8 mt-auto">
-         <div className="max-w-7xl mx-auto w-full">
-            <p className="text-slate-200 text-xs font-medium">neelshekhar</p>
-         </div>
+      <footer className="bg-white border-t border-slate-200 py-6 px-4 sm:px-6 lg:px-8 mt-auto shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.02)]">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="text-slate-400 text-[10px] font-bold tracking-[0.2em] uppercase">staffing optimizer v2.5</span>
+            <span className="hidden sm:inline w-px h-3 bg-slate-300"></span>
+            <span className="text-slate-500 text-xs font-medium">with neelshekhar</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-indigo-500 shadow-sm shadow-indigo-200"></div>
+            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200"></div>
+            <div className="w-2 h-2 rounded-full bg-amber-500 shadow-sm shadow-amber-200"></div>
+          </div>
+        </div>
       </footer>
     </div>
   );
