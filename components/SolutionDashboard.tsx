@@ -4,7 +4,11 @@ import { StaffingSolution, DemandData, Constraints, TIME_BLOCKS, DayOfWeek } fro
 import { 
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
-import { CheckCircle2, Users, Clock, CalendarDays, BarChart2, Activity, TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
+import { 
+  CheckCircle2, Users, Clock, CalendarDays, BarChart2, 
+  Activity, TrendingUp, TrendingDown, Sparkles, BookOpen, 
+  ChevronRight, Target, Workflow, Scale
+} from 'lucide-react';
 
 interface SolutionDashboardProps {
   solution: StaffingSolution;
@@ -13,7 +17,7 @@ interface SolutionDashboardProps {
 }
 
 const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand, constraints }) => {
-  const [view, setView] = useState<'overview' | 'roster' | 'heatmap'>('overview');
+  const [view, setView] = useState<'overview' | 'roster' | 'heatmap' | 'explanation'>('overview');
   const isOrTools = solution.solverMethod === 'ortools';
   const themeColor = isOrTools ? 'text-purple-600' : 'text-indigo-600';
   const themeBg = isOrTools ? 'bg-purple-50' : 'bg-indigo-50';
@@ -42,21 +46,13 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
         const scheduleStr = associate.schedule[day];
         if (scheduleStr === 'OFF') return;
 
-        // Parse start hour from "HH:00-HH:00"
         const startHour = parseInt(scheduleStr.split(':')[0]);
-        // Map start hour to block index: (Start - 6) / 4
         let blockIndex = -1;
         if (startHour >= 6) blockIndex = (startHour - 6) / 4;
-        else if (startHour === 2) blockIndex = 5; // 02:00 is index 5
+        else if (startHour === 2) blockIndex = 5; 
         
         if (blockIndex >= 0 && blockIndex < 6) {
-          // Add capacity to the starting block
           supply[day][TIME_BLOCKS[blockIndex]] += 1;
-          
-          // FT/WW: 8h = 2 blocks. PT: 4h = 1 block.
-          // Note: The previous algorithm hardcoded PT=4h, FT=8h.
-          // The ORTools one respects the duration in `generatePatterns` but we simplify here for display
-          // assuming standard durations.
           if (associate.role !== 'Part Time') {
              const nextBlockIndex = (blockIndex + 1) % 6;
              supply[day][TIME_BLOCKS[nextBlockIndex]] += 1;
@@ -65,43 +61,33 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
       });
     });
 
-    // 3. Calculate Utilization (Now in Hours)
+    // 3. Calculate Utilization
     const data: Record<string, Record<string, { percent: number; reqHours: number; availHours: number }>> = {};
-    
     days.forEach((day, dayIdx) => {
       data[day] = {};
       const dayDemand = demand[dayIdx];
-      
       TIME_BLOCKS.forEach(block => {
-        const volume = dayDemand.blocks[block]; // Orders
-        const heads = supply[day][block]; // Headcount
-        
-        // Convert Volume to Required Hours
+        const volume = dayDemand.blocks[block];
+        const heads = supply[day][block];
         const reqHours = constraints.avgProductivity > 0 ? volume / constraints.avgProductivity : 0;
-        
-        // Calculate Available Hours (Headcount * 4hr block)
         const availHours = heads * 4; 
-        
         let percent = 0;
         if (reqHours === 0) percent = 0;
-        else if (availHours === 0) percent = 999; // Infinite/Error
+        else if (availHours === 0) percent = 999;
         else percent = Math.round((reqHours / availHours) * 100);
-
         data[day][block] = { percent, reqHours, availHours };
       });
     });
-
     return data;
   }, [solution, demand, constraints]);
 
-  // Updated Thresholds: 85-110% is Optimal
   const getHeatmapColor = (util: number) => {
-    if (util === 999) return 'bg-red-600 text-white'; // Uncovered
-    if (util > 110) return 'bg-red-500 text-white'; // Understaffed (>110%)
-    if (util >= 85) return 'bg-emerald-500 text-white'; // Optimal (85-110%)
-    if (util >= 70) return 'bg-blue-400 text-white'; // Safe/Relaxed (70-84%)
-    if (util > 0) return 'bg-blue-200 text-slate-700'; // Overstaffed (<70%)
-    return 'bg-slate-100 text-slate-400'; // No volume
+    if (util === 999) return 'bg-red-600 text-white';
+    if (util > 110) return 'bg-red-500 text-white';
+    if (util >= 85) return 'bg-emerald-500 text-white';
+    if (util >= 70) return 'bg-blue-400 text-white';
+    if (util > 0) return 'bg-blue-200 text-slate-700';
+    return 'bg-slate-100 text-slate-400';
   };
 
   const totalWeeklyHours = solution.roster.reduce((acc, r) => acc + r.totalHours, 0);
@@ -112,7 +98,7 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
       
       {/* Sub-Navigation */}
       <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button
             onClick={() => setView('overview')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -137,8 +123,17 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
           >
             Detailed Roster
           </button>
+          <button
+            onClick={() => setView('explanation')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+              view === 'explanation' ? 'bg-amber-100 text-amber-700' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            Staffing Logic
+          </button>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="hidden md:flex items-center gap-3">
            {isOrTools && (
                <span className="px-2 py-1 rounded-md bg-purple-100 text-purple-700 text-xs font-bold flex items-center gap-1 border border-purple-200">
                   <Sparkles className="w-3 h-3" /> Pattern Solver Active
@@ -152,7 +147,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
 
       {view === 'overview' && (
         <div className="space-y-6">
-          {/* KPI Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className={`bg-white p-5 rounded-xl border border-slate-200 shadow-sm ${isOrTools ? 'border-purple-100' : ''}`}>
               <div className="flex items-center gap-3 mb-2">
@@ -165,7 +159,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                 {totalWeeklyHours.toLocaleString()} <span className="text-sm font-normal text-slate-400">hrs/wk</span>
               </div>
             </div>
-
             <div className={`bg-white p-5 rounded-xl border border-slate-200 shadow-sm ${isOrTools ? 'border-purple-100' : ''}`}>
               <div className="flex items-center gap-3 mb-2">
                 <div className="p-2 bg-emerald-50 rounded-lg">
@@ -177,7 +170,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                 {solution.weeklyStats.blendedUtilization.toFixed(1)}% <span className="text-sm font-normal text-slate-400">utilization</span>
               </div>
             </div>
-
             <div className={`bg-white p-5 rounded-xl border border-slate-200 shadow-sm ${isOrTools ? 'border-purple-100' : ''}`}>
                <div className="flex items-center gap-3 mb-2">
                 <div className="p-2 bg-amber-50 rounded-lg">
@@ -192,13 +184,10 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
               </div>
             </div>
           </div>
-
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Strategy Text */}
             <div className={`md:col-span-2 bg-white p-6 rounded-xl border shadow-sm ${isOrTools ? 'border-purple-200' : 'border-slate-200'}`}>
               <h3 className={`text-lg font-semibold mb-3 ${isOrTools ? 'text-purple-800' : 'text-slate-800'}`}>Optimization Strategy</h3>
               <p className="text-slate-600 leading-relaxed text-sm whitespace-pre-wrap font-sans">{solution.strategySummary}</p>
-              
               <h4 className="font-medium text-slate-800 mt-6 mb-3">Key Recommendations</h4>
               <ul className="space-y-2">
                 {solution.recommendations.map((rec, idx) => (
@@ -209,8 +198,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                 ))}
               </ul>
             </div>
-
-            {/* Mix Chart */}
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
               <h3 className="text-sm font-semibold text-slate-800 mb-2 w-full text-left">Headcount Mix</h3>
               <div className="w-full h-48">
@@ -241,7 +228,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
 
       {view === 'heatmap' && (
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          
           <div className="flex flex-col gap-4 mb-6">
              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -252,12 +238,8 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                     Cell Format: <strong>% Utilization (Required Hours / Available Hours)</strong>
                 </div>
              </div>
-
-             {/* Deep Dive Section */}
              <div className={`${themeBg} rounded-lg p-4 border border-slate-100`}>
-                {/* Row 1: Hours Analysis & Scenarios (2 Columns) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* 1. Hours Analysis */}
                     <div className="space-y-3">
                        <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
                          <Clock className={`w-4 h-4 ${themeColor}`} /> Labor Hours Analysis
@@ -280,8 +262,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                          </div>
                        </div>
                     </div>
-
-                    {/* 2. Scenario Planning Guide */}
                     <div className="space-y-3">
                        <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
                          <Activity className="w-4 h-4 text-emerald-600" /> Scenario Planning Guide
@@ -306,14 +286,12 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                 </div>
              </div>
           </div>
-          
           <div className="flex justify-end gap-4 mb-4 text-xs font-medium text-slate-600 flex-wrap border-t border-slate-100 pt-4">
             <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded"></div> Optimal (85-110%)</div>
             <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-400 rounded"></div> Relaxed (70-84%)</div>
             <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-200 rounded"></div> Low (&lt;70%)</div>
             <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Understaffed (&gt;110%)</div>
           </div>
-
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left border-collapse">
               <thead>
@@ -346,9 +324,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
               </tbody>
             </table>
           </div>
-          <p className="text-xs text-slate-400 mt-4 italic">
-            * Utilization = Required Hours (Demand/Prod) / Available Roster Hours.
-          </p>
         </div>
       )}
 
@@ -383,14 +358,11 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                     </td>
                     {days.map(d => (
                       <td key={d} className="px-2 py-2 text-center">
-                        {/* @ts-ignore */}
                         <div className={`py-1 px-1 rounded ${
-                           // @ts-ignore
                           person.schedule[d] === 'OFF' 
                             ? 'bg-slate-100 text-slate-400' 
                             : (isOrTools ? 'bg-purple-50 text-purple-700 font-medium' : 'bg-indigo-50 text-indigo-700 font-medium')
                         }`}>
-                           {/* @ts-ignore */}
                           {person.schedule[d]}
                         </div>
                       </td>
@@ -405,6 +377,141 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
           </div>
         </div>
       )}
+
+      {view === 'explanation' && (
+        <div className="animate-in slide-in-from-right-4 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Main Methodology Column */}
+            <div className="lg:col-span-2 space-y-6">
+              
+              {/* Methodology Header */}
+              <div className="bg-amber-50 border border-amber-200 p-6 rounded-xl shadow-sm">
+                <div className="flex items-center gap-3 mb-4">
+                   <Workflow className="w-6 h-6 text-amber-600" />
+                   <h3 className="text-xl font-bold text-amber-900">
+                     Algorithm Step-by-Step Breakdown
+                   </h3>
+                </div>
+                <p className="text-amber-800 text-sm leading-relaxed mb-4">
+                  The {isOrTools ? 'Pattern-Based Solver' : 'Deterministic Greedy Solver'} uses a multi-phase approach to transform raw volume into a compliant workforce roster. Below is the exact sequence of logic used to generate your result.
+                </p>
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 bg-white/50 px-3 py-1.5 rounded-lg border border-amber-100">
+                    <Target className="w-3.5 h-3.5" /> Goal: Maximize Coverage
+                  </div>
+                  <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 bg-white/50 px-3 py-1.5 rounded-lg border border-amber-100">
+                    <Scale className="w-3.5 h-3.5" /> Goal: Enforce Labor Laws
+                  </div>
+                </div>
+              </div>
+
+              {/* Steps List */}
+              <div className="space-y-4">
+                {[
+                  {
+                    title: "Demand Discretization",
+                    desc: "The algorithm starts by taking your total 24-hour volume and converting it into required 'Headcount Units'. It calculates that for every block, you need X number of people based on your productivity constant and utilization target.",
+                    icon: <BarChart2 className="w-5 h-5" />,
+                    color: "bg-blue-100 text-blue-600"
+                  },
+                  {
+                    title: "Contract Archetype Creation",
+                    desc: `Based on your constraints, the solver builds a library of valid shifts. Full-Time shifts are built as 9-hour blocks (8h work + 1h break), while Part-Time shifts are 4-hour blocks. ${isOrTools ? 'For the Pattern Solver, these are pre-generated as thousands of 6-day combinations.' : 'For the Greedy solver, these are tessellated as needed.'}`,
+                    icon: <Clock className="w-5 h-5" />,
+                    color: "bg-indigo-100 text-indigo-600"
+                  },
+                  {
+                    title: isOrTools ? "Adaptive Pattern Matching" : "Greedy Unit Filling",
+                    desc: isOrTools 
+                      ? "Iteratively selects the 'Best Fit' 6-day pattern. A pattern is chosen if it covers most of the remaining demand while incurring the least amount of 'Overstaffing Penalty'. This continues until all gaps are closed or no improvement is possible."
+                      : "Fills demand sequentially. It looks for 'Heavy Gaps' (consecutive 4-hour blocks) and assigns Full-Time associates first, then mops up remaining isolated gaps using Part-Time staff.",
+                    icon: <Sparkles className="w-5 h-5" />,
+                    color: "bg-purple-100 text-purple-600"
+                  },
+                  {
+                    title: "Constraint & Mix Enforcement",
+                    desc: `The solver checks the resulting mix against your ${constraints.partTimeCap}% PT and ${constraints.weekendCap}% WW caps. If PT staff exceed the limit, they are promoted to Full-Time. If Weekend staff are over the limit, the algorithm expands their role into a 6-day weekday rotation.`,
+                    icon: <Scale className="w-5 h-5" />,
+                    color: "bg-emerald-100 text-emerald-600"
+                  }
+                ].map((step, i) => (
+                  <div key={i} className="flex gap-4 p-5 bg-white border border-slate-200 rounded-xl hover:shadow-md transition-shadow group">
+                    <div className="flex-shrink-0">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${step.color}`}>
+                        {step.icon}
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                        Step {i + 1}: {step.title}
+                        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:translate-x-1 transition-transform" />
+                      </h4>
+                      <p className="text-slate-600 text-sm mt-1 leading-relaxed">
+                        {step.desc}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Right Logic Column */}
+            <div className="space-y-6">
+              
+              {/* How Mix is Assigned */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  How Mix is Assigned
+                </h3>
+                <div className="space-y-4">
+                  <div className="p-3 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
+                    <h4 className="text-xs font-bold text-blue-700 uppercase">Full Time Priority</h4>
+                    <p className="text-xs text-blue-800 mt-1">Used for the 'Floor' demand. FT staff are assigned in 6-day blocks to provide structural stability.</p>
+                  </div>
+                  <div className="p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-r-lg">
+                    <h4 className="text-xs font-bold text-emerald-700 uppercase">Part Time Utility</h4>
+                    <p className="text-xs text-emerald-800 mt-1">Used to fill 'Isolated Spikes'. If demand only exists for 4 hours, PT is selected to avoid paying for an unneeded extra 4 hours.</p>
+                  </div>
+                  <div className="p-3 bg-amber-50 border-l-4 border-amber-500 rounded-r-lg">
+                    <h4 className="text-xs font-bold text-amber-700 uppercase">Weekend Warriors</h4>
+                    <p className="text-xs text-amber-800 mt-1">Used specifically for Friday-Sunday surges. They are deployed when core FT staff have exhausted their 6 working days.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Staffing Allocation Rules */}
+              <div className="bg-slate-800 text-slate-100 p-6 rounded-xl shadow-lg border border-slate-700">
+                <h3 className="font-bold mb-4 flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  Core Allocation Rules
+                </h3>
+                <ul className="space-y-3 text-xs">
+                  <li className="flex gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1 shrink-0"></div>
+                    <span><strong>1-Day Minimum Off:</strong> Every FT/PT associate must have exactly 1 day off per week.</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1 shrink-0"></div>
+                    <span><strong>Start Consistency:</strong> Once an associate starts at 06:00, their shift remains consistent across all 6 working days.</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1 shrink-0"></div>
+                    <span><strong>Weekend Bias:</strong> Roster selection prioritizes filling Saturday and Sunday gaps first.</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1 shrink-0"></div>
+                    <span><strong>Utilization Buffer:</strong> The solver aims for your target {constraints.targetUtilization}% rather than raw volume to allow for indirect work.</span>
+                  </li>
+                </ul>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
