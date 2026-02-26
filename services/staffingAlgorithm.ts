@@ -30,12 +30,30 @@ export const generateAlgorithmicStaffingPlan = (
 
     const uncovered = [...blockCapacities];
 
-    // Priority 1: FT (8h)
+    // Priority 1: Force cover block 4 (22:00-02:00) and block 5 (02:00-06:00) with FT starting at block 4 (22:00).
+    // This is the ONLY valid shift that covers these blocks without violating constraints:
+    // - No shift starts after Midnight (00:00)
+    // - No shift ends before 5 AM (05:00)
+    const requiredBlock4FT = Math.max(uncovered[4], uncovered[5]);
+    for (let k = 0; k < requiredBlock4FT; k++) {
+        neededShifts.push({
+            day: dayData.day,
+            dayIndex: dayIdx,
+            blockIndex: 4,
+            type: 'FT',
+            durationHours: 8,
+        });
+        uncovered[4]--;
+        uncovered[5]--;
+    }
+
+    // Priority 2: FT (8h) for remaining valid blocks (0, 1, 2)
     for (let i = 0; i < TIME_BLOCKS.length; i++) {
       const currentBlock = i;
       const nextBlock = (i + 1) % TIME_BLOCKS.length;
       
-      if (i < TIME_BLOCKS.length - 1) { 
+      // Valid FT start blocks: 0, 1, 2
+      if (currentBlock === 0 || currentBlock === 1 || currentBlock === 2) { 
         while (uncovered[currentBlock] > 0 && uncovered[nextBlock] > 0) {
           neededShifts.push({
             day: dayData.day,
@@ -50,17 +68,20 @@ export const generateAlgorithmicStaffingPlan = (
       }
     }
 
-    // Priority 2: PT (4h)
+    // Priority 3: PT (4h) for remaining valid blocks (0, 1, 2, 3)
     for (let i = 0; i < TIME_BLOCKS.length; i++) {
-      while (uncovered[i] > 0) {
-        neededShifts.push({
-          day: dayData.day,
-          dayIndex: dayIdx,
-          blockIndex: i,
-          type: 'PT',
-          durationHours: 4,
-        });
-        uncovered[i]--;
+      // Valid PT start blocks: 0, 1, 2, 3
+      if (i === 0 || i === 1 || i === 2 || i === 3) {
+        while (uncovered[i] > 0) {
+          neededShifts.push({
+            day: dayData.day,
+            dayIndex: dayIdx,
+            blockIndex: i,
+            type: 'PT',
+            durationHours: 4,
+          });
+          uncovered[i]--;
+        }
       }
     }
   });
@@ -207,8 +228,11 @@ export const generateAlgorithmicStaffingPlan = (
     if (ptCount <= ptLimit) break;
     if (ptCount === 0) break; 
 
-    // Find a PT candidate to promote (e.g., the one with most hours, or just the first)
-    const candidateIdx = roster.findIndex(r => r.role === 'Part Time');
+    // Find a PT candidate to promote (prefer those NOT starting at block 3, as FT at block 3 is invalid)
+    let candidateIdx = roster.findIndex(r => r.role === 'Part Time' && !Object.values(r.schedule).some(s => s.startsWith('18:00')));
+    if (candidateIdx === -1) {
+        candidateIdx = roster.findIndex(r => r.role === 'Part Time');
+    }
     if (candidateIdx === -1) break;
 
     const candidate = roster[candidateIdx];
@@ -227,6 +251,11 @@ export const generateAlgorithmicStaffingPlan = (
         else if (startHour === 2) blockIndex = 5;
         
         if (blockIndex !== -1) {
+            // If blockIndex is 3 (18:00), we cannot make it an FT shift because it would end at 03:00 (invalid).
+            // So we shift it to block 2 (14:00) to keep it valid.
+            if (blockIndex === 3) {
+                blockIndex = 2;
+            }
             candidate.schedule[day] = formatShiftTime(blockIndex, 'FT');
             candidate.totalHours += 4; // Add 4 hours (4->8)
         }

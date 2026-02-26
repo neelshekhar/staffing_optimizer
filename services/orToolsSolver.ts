@@ -22,6 +22,22 @@ interface SchedulePattern {
 // Represents the residual demand curve
 type DemandMatrix = Record<DayOfWeek, number[]>; // Array of 6 integers per day
 
+// Helper to check if a shift is valid based on constraints
+const isValidShift = (startBlock: number, duration: number): boolean => {
+    const startHour = 6 + (startBlock * 4);
+    const endHour = (startHour + duration) % 24;
+    
+    const actualStartHour = startHour >= 24 ? startHour - 24 : startHour;
+    
+    // No shift starts after Midnight (00:00)
+    if (actualStartHour > 0 && actualStartHour < 5) return false;
+    
+    // No shift ends before 5 AM
+    if (endHour > 0 && endHour < 5) return false;
+    
+    return true;
+};
+
 // --- 1. Pattern Generation (SolveShiftGeneration) ---
 // Instead of building shifts dynamically, we generate the "Universe of Valid Patterns"
 const generatePatterns = (): SchedulePattern[] => {
@@ -32,6 +48,8 @@ const generatePatterns = (): SchedulePattern[] => {
   // Shift: 9 hours (8h work + 1h break implies 2 blocks of coverage).
   for (let offDayIdx = 0; offDayIdx < 7; offDayIdx++) {
     for (let startBlock = 0; startBlock < 6; startBlock++) {
+      if (!isValidShift(startBlock, 9)) continue;
+
       const schedule: any = {};
       let hours = 0;
       DAYS.forEach((day, idx) => {
@@ -58,6 +76,8 @@ const generatePatterns = (): SchedulePattern[] => {
   // Shift: 4 hours (1 block).
   for (let offDayIdx = 0; offDayIdx < 7; offDayIdx++) {
     for (let startBlock = 0; startBlock < 6; startBlock++) {
+       if (!isValidShift(startBlock, 4)) continue;
+
        const schedule: any = {};
        let hours = 0;
        DAYS.forEach((day, idx) => {
@@ -82,6 +102,8 @@ const generatePatterns = (): SchedulePattern[] => {
   // Constraint: Must work Sat AND Sun.
   // Shift: 9 hours (8h work).
   for (let startBlock = 0; startBlock < 6; startBlock++) {
+    if (!isValidShift(startBlock, 9)) continue;
+
     const schedule: any = {};
     let hours = 0;
     DAYS.forEach(day => {

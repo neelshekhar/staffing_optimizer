@@ -103,6 +103,14 @@ const ConstraintsForm: React.FC<ConstraintsFormProps> = ({ constraints, onChange
            </div>
            <p className="text-xs text-slate-400 mt-2">Max allowable headcount ratio relative to Full Time staff.</p>
         </div>
+
+        <div className="pt-4 border-t border-slate-100">
+           <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Baked-in Constraints</h3>
+           <ul className="text-xs text-slate-500 list-disc pl-4 space-y-1">
+             <li>No shift starts after Midnight.</li>
+             <li>No shift ends before 5:00 AM.</li>
+           </ul>
+        </div>
       </div>
     </div>
   );
