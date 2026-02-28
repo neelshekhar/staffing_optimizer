@@ -77,10 +77,38 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
         if (scheduleStr === 'OFF') return;
 
         const startHour = parseInt(scheduleStr.split(':')[0]);
-        const duration = associate.role === 'Part Time' ? 4 : 8; // Assuming 8h work for FT/WW
+        const duration = associate.role === 'Part Time' ? 4 : 9; // 9h duration for FT/WW
         
-        for (let i = 0; i < duration; i++) {
-            supply[day][(startHour + i) % 24] += 1;
+        if (associate.role === 'Part Time') {
+             for (let i = 0; i < duration; i++) {
+                supply[day][(startHour + i) % 24] += 1;
+            }
+        } else {
+            // Peak Protected Smearing for FT/WW
+            // 1. Get demand for this window to find peaks
+            const dayDemand = demand.find(d => d.day === day);
+            if (dayDemand) {
+                const windowHours: { hourIdx: number, val: number }[] = [];
+                for (let i = 0; i < duration; i++) {
+                    const h = (startHour + i) % 24;
+                    windowHours.push({ hourIdx: h, val: dayDemand.hours[h] });
+                }
+                // 2. Sort by demand to find top 3
+                windowHours.sort((a, b) => b.val - a.val);
+                const peakHours = new Set(windowHours.slice(0, 3).map(x => x.hourIdx));
+                
+                // 3. Assign capacity
+                for (let i = 0; i < duration; i++) {
+                    const h = (startHour + i) % 24;
+                    const cap = peakHours.has(h) ? 1.0 : 5/6;
+                    supply[day][h] += cap;
+                }
+            } else {
+                // Fallback if demand data missing
+                for (let i = 0; i < duration; i++) {
+                    supply[day][(startHour + i) % 24] += 8/9;
+                }
+            }
         }
       });
     });
@@ -676,10 +704,16 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                     color: "bg-blue-100 text-blue-600"
                   },
                   {
-                    title: "Shift Pattern Generation",
-                    desc: `Valid shifts are built: Full-Time (8h work) and Part-Time (4h work). ${isOrTools ? 'For your simulation, the solver considered thousands of combinations of 6-day work weeks, rotating off-days to fill all demand gaps while minimizing overstaffing.' : 'The greedy solver searched for contiguous 8-hour blocks to fill with FT staff first.'}`,
+                    title: "Peak Protected Smearing",
+                    desc: `To maximize service levels, the algorithm uses Peak Protected Smearing. For every 9-hour Full-Time shift, it identifies the 3 busiest hours and assigns 100% capacity (assuming no breaks). The remaining work (5 hours) is smeared across the other 6 hours (~83% capacity).`,
                     icon: <Clock className="w-5 h-5" />,
                     color: "bg-indigo-100 text-indigo-600"
+                  },
+                  {
+                    title: "Shift Pattern Generation",
+                    desc: `Valid shifts are built: Full-Time (9h duration, 8h work) and Part-Time (4h duration, 4h work). ${isOrTools ? 'For your simulation, the solver considered thousands of combinations of 6-day work weeks, rotating off-days to fill all demand gaps while minimizing overstaffing.' : 'The greedy solver searched for contiguous 9-hour blocks to fill with FT staff first.'}`,
+                    icon: <Workflow className="w-5 h-5" />,
+                    color: "bg-amber-100 text-amber-600"
                   },
                   {
                     title: isOrTools ? "Weighted Pattern Selection" : "Greedy Unit Filling",

@@ -34,21 +34,54 @@ export const generateAlgorithmicStaffingPlan = (
 
   demandData.forEach((dayData, dayIdx) => {
     const onePersonCapacity = constraints.avgProductivity * (constraints.targetUtilization / 100);
-    const uncovered = dayData.hours.map(vol => Math.ceil(vol / onePersonCapacity));
+    const uncovered = dayData.hours.map(vol => vol / onePersonCapacity);
 
     let safety = 0;
-    while (uncovered.some(v => v > 0) && safety < 1000) {
+    while (uncovered.some(v => v > 0.01) && safety < 1000) {
       safety++;
       let bestShift: { start: number, type: 'FT'|'PT', covered: number, efficiency: number } | null = null;
       let maxEfficiency = -1;
 
       const evaluate = (s: number, type: 'FT'|'PT', workHours: number, duration: number) => {
         if (!isValidShift(s, duration)) return;
+        
         let covered = 0;
-        for (let i = 0; i < workHours; i++) {
-          if (uncovered[(s + i) % 24] > 0) covered++;
+        
+        if (type === 'FT') {
+            // Peak Protection Logic:
+            // Identify the 3 hours with highest UNMET demand within the 9-hour window.
+            // Assign 1.0 capacity to those 3 hours.
+            // Assign 5/6 (0.833) capacity to the other 6 hours.
+            
+            const windowHours: { hourIdx: number, demand: number }[] = [];
+            for (let i = 0; i < duration; i++) {
+                const h = (s + i) % 24;
+                windowHours.push({ hourIdx: h, demand: uncovered[h] });
+            }
+            
+            // Sort by demand descending to find peaks
+            windowHours.sort((a, b) => b.demand - a.demand);
+            
+            // Top 3 get 1.0, rest get 0.833
+            const capacityMap = new Map<number, number>();
+            windowHours.forEach((wh, idx) => {
+                capacityMap.set(wh.hourIdx, idx < 3 ? 1.0 : 5/6);
+            });
+            
+            for (let i = 0; i < duration; i++) {
+                const h = (s + i) % 24;
+                const cap = capacityMap.get(h)!;
+                covered += Math.min(uncovered[h], cap);
+            }
+        } else {
+            // PT Logic: Flat 1.0 capacity
+            for (let i = 0; i < duration; i++) {
+                const h = (s + i) % 24;
+                covered += Math.min(uncovered[h], 1.0);
+            }
         }
-        if (covered === 0) return;
+        
+        if (covered < 0.01) return;
         
         const efficiency = covered / workHours;
         
@@ -82,9 +115,31 @@ export const generateAlgorithmicStaffingPlan = (
         durationHours: bestShift.type === 'FT' ? 8 : 4
       });
 
-      const workHours = bestShift.type === 'FT' ? 8 : 4;
-      for (let i = 0; i < workHours; i++) {
-        uncovered[(bestShift.start + i) % 24]--;
+      if (bestShift.type === 'FT') {
+          // Re-calculate capacities for assignment
+          const windowHours: { hourIdx: number, demand: number }[] = [];
+          for (let i = 0; i < 9; i++) {
+              const h = (bestShift.start + i) % 24;
+              windowHours.push({ hourIdx: h, demand: uncovered[h] });
+          }
+          windowHours.sort((a, b) => b.demand - a.demand);
+          
+          const capacityMap = new Map<number, number>();
+          windowHours.forEach((wh, idx) => {
+              capacityMap.set(wh.hourIdx, idx < 3 ? 1.0 : 5/6);
+          });
+          
+          for (let i = 0; i < 9; i++) {
+              const h = (bestShift.start + i) % 24;
+              const cap = capacityMap.get(h)!;
+              uncovered[h] = Math.max(0, uncovered[h] - cap);
+          }
+      } else {
+          // PT Assignment
+          for (let i = 0; i < 4; i++) {
+              const h = (bestShift.start + i) % 24;
+              uncovered[h] = Math.max(0, uncovered[h] - 1.0);
+          }
       }
     }
   });
@@ -337,7 +392,12 @@ export const generateAlgorithmicStaffingPlan = (
 
   const summary = `Optimization Strategy & Algorithmic Methodology:
 
-The model employs a deterministic greedy constraint satisfaction algorithm to optimize workforce allocation. It starts by discretizing demand into productivity-based "shift units," which are then tessellated into efficient 6-day (Full-Time) and Weekend Warrior rosters. A heuristic solver enforces strict adherence to 48-hour and 24-hour contract types while utilizing a dynamic rotation vector for weekly off-days to prevent both Saturday and Sunday coverage gaps. Finally, a post-processing logic layer promotes associates to Full-Time status where necessary to strictly adhere to the user-defined Part-Time (${constraints.partTimeCap}%) and Weekend Warrior (${constraints.weekendCap}%) mix caps.`;
+The model employs a deterministic greedy constraint satisfaction algorithm to optimize workforce allocation, incorporating **Peak Protected Smearing** for intelligent capacity modeling. 
+
+1. **Peak Protected Smearing:** Instead of a flat break deduction, the algorithm dynamically identifies the 3 busiest hours within every 9-hour Full-Time shift. It assigns **100% capacity** to these peak hours (assuming no breaks are taken then) and smears the remaining work (5 hours) across the other 6 hours (~83% capacity). This protects service levels during critical intervals.
+2. **Shift Tessellation:** Demand is discretized into productivity-based "shift units." The algorithm then tessellates these units into efficient 6-day (Full-Time) and Weekend Warrior rosters, prioritizing Full-Time shifts for base load and Part-Time (4-hour) shifts for peak shaving.
+3. **Constraint Enforcement:** A heuristic solver enforces strict adherence to 48-hour and 24-hour contract types while utilizing a dynamic rotation vector for weekly off-days to prevent both Saturday and Sunday coverage gaps. 
+4. **Mix Caps:** A post-processing logic layer promotes associates to Full-Time status where necessary to strictly adhere to the user-defined Part-Time (${constraints.partTimeCap}%) and Weekend Warrior (${constraints.weekendCap}%) mix caps.`;
 
   return {
     strategySummary: summary,

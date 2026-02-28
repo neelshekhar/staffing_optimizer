@@ -138,7 +138,7 @@ export const generateORToolsStaffingPlan = async (
     demandData[i].hours.forEach(vol => {
         totalVolume += vol;
         const capacityPerPerson = constraints.avgProductivity;
-        requiredHeadcount.push(Math.ceil(vol / capacityPerPerson));
+        requiredHeadcount.push(vol / capacityPerPerson);
     });
   });
 
@@ -188,7 +188,7 @@ export const generateORToolsStaffingPlan = async (
           if (startHour !== null) {
               // Check if this pattern covers this specific hour
               let covers = false;
-              for (let h = 0; h < p.workHours; h++) {
+              for (let h = 0; h < p.shiftDuration; h++) {
                   if ((startHour + h) % 24 === hourIdx) {
                       covers = true;
                       break;
@@ -197,7 +197,9 @@ export const generateORToolsStaffingPlan = async (
               
               if (covers) {
                   if (!first) constraintExpr += " + ";
-                  constraintExpr += `x_${j}`;
+                  const capacityPerHour = p.workHours / p.shiftDuration;
+                  // Highs LP format supports floats
+                  constraintExpr += `${capacityPerHour} x_${j}`;
                   first = false;
               }
           }
