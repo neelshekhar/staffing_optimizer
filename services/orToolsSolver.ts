@@ -133,12 +133,16 @@ export const generateORToolsStaffingPlan = async (
   // 1. Initialize Demand Matrix (Net Required Headcount)
   let totalVolume = 0;
   const requiredHeadcount: number[] = []; // Flattened 168 hours
+  const rawDemand: number[] = []; // Keep raw demand for peak detection
+
+  // Safety: Ensure productivity is positive to avoid Infinity
+  const safeProductivity = Math.max(0.1, constraints.avgProductivity);
 
   DAYS.forEach((day, i) => {
     demandData[i].hours.forEach(vol => {
         totalVolume += vol;
-        const capacityPerPerson = constraints.avgProductivity;
-        requiredHeadcount.push(vol / capacityPerPerson);
+        rawDemand.push(vol);
+        requiredHeadcount.push(vol / safeProductivity);
     });
   });
 
@@ -180,6 +184,9 @@ export const generateORToolsStaffingPlan = async (
       const day = DAYS[dayIdx];
       const demand = requiredHeadcount[i];
       
+      // Safety check for demand
+      const safeDemand = isFinite(demand) ? demand : 0;
+      
       let constraintExpr = "";
       let first = true;
       
@@ -188,18 +195,94 @@ export const generateORToolsStaffingPlan = async (
           if (startHour !== null) {
               // Check if this pattern covers this specific hour
               let covers = false;
+              let shiftOffset = -1;
+              
               for (let h = 0; h < p.shiftDuration; h++) {
                   if ((startHour + h) % 24 === hourIdx) {
                       covers = true;
+                      shiftOffset = h;
                       break;
                   }
               }
               
               if (covers) {
                   if (!first) constraintExpr += " + ";
-                  const capacityPerHour = p.workHours / p.shiftDuration;
-                  // Highs LP format supports floats
-                  constraintExpr += `${capacityPerHour} x_${j}`;
+                  
+                  let capacity = 1.0;
+                  
+                  if (p.role === 'Part Time') {
+                      capacity = 1.0;
+                  } else {
+                      // FT/WW: Peak Protected Smearing
+                      // 1. Identify the window for this shift instance
+                      // We need to look at rawDemand for the window covered by this shift
+                      const windowVals: { h: number, val: number }[] = [];
+                      for (let h = 0; h < p.shiftDuration; h++) {
+                          // Calculate absolute index in the 168-hour array
+                          // Handle wrapping across days? 
+                          // The shift is defined by startHour on 'day'. 
+                          // If (startHour + h) >= 24, it wraps to next day.
+                          // But our demandData is 0-23 per day.
+                          // Let's assume simple daily wrapping for demand lookup since shifts wrap daily cycles
+                          const currentHour = (startHour + h) % 24;
+                          // We use the demand of the CURRENT day for peak detection logic 
+                          // (or should we use the demand of the day the shift falls on? 
+                          //  Shifts wrapping midnight might cross days. 
+                          //  Let's stick to the demand of the day the hour belongs to.)
+                          
+                          // Actually, simpler: We are at global index 'i' (dayIdx, hourIdx).
+                          // The shift started at 'startHour' on 'dayIdx'.
+                          // We need to know if 'hourIdx' is a peak relative to the other hours in this shift.
+                          
+                          // Reconstruct the full window of hours for this shift
+                          // The shift starts at dayIdx, startHour.
+                          // It spans 9 hours.
+                          
+                          // We need the demand for all 9 hours to rank them.
+                          // Note: If shift wraps midnight, it might span into dayIdx+1.
+                          
+                          let targetDayIdx = dayIdx;
+                          let targetHour = startHour + h;
+                          if (targetHour >= 24) {
+                              targetHour -= 24;
+                              // If the shift started today, and we are looking at later hours, 
+                              // we just need the demand for those hours.
+                              // However, 'rawDemand' is flattened.
+                              // If shift wraps, we should look at next day's demand?
+                              // Yes, for accuracy.
+                              // But 'p.shifts[day]' implies the shift BELONGS to 'day'.
+                              // If it wraps, it covers early morning of next day.
+                          }
+                          
+                          // Let's simplify: Use the demand of the hours covered.
+                          // We need to find the global index for each hour of the shift.
+                          // The shift starts at global index: dayIdx * 24 + startHour.
+                          // But wait, if startHour + duration > 24, it wraps.
+                          
+                          const globalStart = dayIdx * 24 + startHour;
+                          const globalCurrent = globalStart + h;
+                          // Handle end of week wrapping? 
+                          // If it's Sunday night wrapping to Monday?
+                          // The solver treats 168 hours linearly.
+                          // If a shift wraps 168->0, that's complex.
+                          // But 'isValidShift' prevents wrapping across 00:00-05:00 boundary?
+                          // No, 'isValidShift' prevents starting >0 && <5.
+                          // It allows wrapping if it doesn't break rules.
+                          // But let's assume standard linear indexing.
+                          
+                          const lookupIdx = globalCurrent % 168; 
+                          windowVals.push({ offset: h, val: rawDemand[lookupIdx] });
+                      }
+                      
+                      // Sort by demand descending
+                      windowVals.sort((a, b) => b.val - a.val);
+                      
+                      // Top 3 are peaks
+                      const isPeak = windowVals.slice(0, 3).some(w => w.offset === shiftOffset);
+                      capacity = isPeak ? 1.0 : 5/6;
+                  }
+
+                  constraintExpr += `${capacity.toFixed(4)} x_${j}`;
                   first = false;
               }
           }
@@ -237,7 +320,7 @@ export const generateORToolsStaffingPlan = async (
           if (ptConstraintExpr !== "" && ptCoeff > 0) ptConstraintExpr += " + ";
           else if (ptConstraintExpr !== "" && ptCoeff < 0) ptConstraintExpr += " - ";
           else if (ptConstraintExpr === "" && ptCoeff < 0) ptConstraintExpr += "- ";
-          ptConstraintExpr += `${Math.abs(ptCoeff)} x_${j}`;
+          ptConstraintExpr += `${Math.abs(ptCoeff).toFixed(4)} x_${j}`;
       }
       
       // For WW constraint: (1 - wwRatio)*WW - wwRatio*FT - wwRatio*PT <= 0
@@ -252,7 +335,7 @@ export const generateORToolsStaffingPlan = async (
           if (wwConstraintExpr !== "" && wwCoeff > 0) wwConstraintExpr += " + ";
           else if (wwConstraintExpr !== "" && wwCoeff < 0) wwConstraintExpr += " - ";
           else if (wwConstraintExpr === "" && wwCoeff < 0) wwConstraintExpr += "- ";
-          wwConstraintExpr += `${Math.abs(wwCoeff)} x_${j}`;
+          wwConstraintExpr += `${Math.abs(wwCoeff).toFixed(4)} x_${j}`;
       }
   });
   

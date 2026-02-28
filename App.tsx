@@ -4,7 +4,7 @@ import { INITIAL_CONSTRAINTS, INITIAL_DEMAND, Constraints, DemandData, StaffingS
 import DemandInput from './components/DemandInput';
 import ConstraintsForm from './components/ConstraintsForm';
 import SolutionDashboard from './components/SolutionDashboard';
-import { generateORToolsStaffingPlan } from './services/orToolsSolver';
+import { generateAlgorithmicStaffingPlan } from './services/staffingAlgorithm';
 import { Layers, Zap, Loader2, BrainCircuit, Shuffle } from 'lucide-react';
 
 export default function App() {
@@ -24,7 +24,7 @@ export default function App() {
     await new Promise(resolve => setTimeout(resolve, 100));
 
     try {
-      const result = await generateORToolsStaffingPlan(demand, constraints);
+      const result = generateAlgorithmicStaffingPlan(demand, constraints);
       setSolution(result);
       setActiveTab('results');
     } catch (err: any) {
@@ -98,10 +98,10 @@ export default function App() {
                   <Shuffle className="w-4 h-4 text-purple-600 mt-0.5 shrink-0" />
                   <div>
                     <p className="text-xs font-medium text-slate-900">
-                      Highs WASM MILP
+                      Greedy Heuristic
                     </p>
                     <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
-                      Mathematically optimal shift coverage.
+                      Peak-protected shift generation.
                     </p>
                   </div>
                 </div>
@@ -124,9 +124,9 @@ export default function App() {
                   Generate Optimized Roster
                 </h3>
                 <p className="text-slate-400 text-xs mt-2 italic">
-                   Powered by WASM and MILP.
+                   Powered by Greedy Heuristic.
                    <br />
-                   This solver uses a Mixed-Integer Linear Programming model executed in the browser via WebAssembly to guarantee mathematically optimal shift coverage.
+                   This solver uses a custom constructive heuristic with Peak Protected Smearing to optimize shift coverage and protect service levels.
                 </p>
               </div>
 
@@ -143,7 +143,7 @@ export default function App() {
                 ) : (
                   <>
                     <BrainCircuit className="w-5 h-5" />
-                    Run Highs Solver
+                    Run Solver
                   </>
                 )}
               </button>
