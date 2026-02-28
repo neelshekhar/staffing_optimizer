@@ -16,7 +16,15 @@ export default defineConfig(({ mode }) => {
       },
       resolve: {
         alias: {
-          '@': path.resolve(__dirname, '.'),
+          '@': path.resolve(__dirname, '.')
+        }
+      },
+      optimizeDeps: {
+        include: ['highs']
+      },
+      build: {
+        commonjsOptions: {
+          include: [/highs/, /node_modules/]
         }
       }
     };
