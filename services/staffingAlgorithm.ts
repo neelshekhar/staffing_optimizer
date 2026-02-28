@@ -1,4 +1,4 @@
-import { AssociateRoster, Constraints, DemandData, StaffingSolution, TIME_BLOCKS, DayOfWeek } from "../types";
+import { AssociateRoster, Constraints, DemandData, StaffingSolution, DayOfWeek } from "../types";
 
 // Helper to generate a consistent ID
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -6,10 +6,22 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 interface ShiftUnit {
   day: DayOfWeek;
   dayIndex: number; // 0=Mon, 6=Sun
-  blockIndex: number;
-  type: 'FT' | 'PT'; // FT = 8h (2 blocks), PT = 4h (1 block)
+  startHour: number;
+  type: 'FT' | 'PT'; // FT = 8h work (9h duration), PT = 4h work (4h duration)
   durationHours: number;
 }
+
+const isValidShift = (startHour: number, duration: number): boolean => {
+  const endHour = (startHour + duration) % 24;
+  
+  // No shift starts after Midnight (00:00) and before 5 AM
+  if (startHour > 0 && startHour < 5) return false;
+  
+  // No shift ends before 5 AM
+  if (endHour > 0 && endHour < 5) return false;
+  
+  return true;
+};
 
 export const generateAlgorithmicStaffingPlan = (
   demandData: DemandData[],
@@ -21,67 +33,58 @@ export const generateAlgorithmicStaffingPlan = (
   const neededShifts: ShiftUnit[] = [];
 
   demandData.forEach((dayData, dayIdx) => {
-    const blockCapacities = TIME_BLOCKS.map(block => {
-      const vol = dayData.blocks[block];
-      // Capacity logic
-      const onePersonCapacity = constraints.avgProductivity * 4 * (constraints.targetUtilization / 100);
-      return Math.ceil(vol / onePersonCapacity);
-    });
+    const onePersonCapacity = constraints.avgProductivity * (constraints.targetUtilization / 100);
+    const uncovered = dayData.hours.map(vol => Math.ceil(vol / onePersonCapacity));
 
-    const uncovered = [...blockCapacities];
+    let safety = 0;
+    while (uncovered.some(v => v > 0) && safety < 1000) {
+      safety++;
+      let bestShift: { start: number, type: 'FT'|'PT', covered: number, efficiency: number } | null = null;
+      let maxEfficiency = -1;
 
-    // Priority 1: Force cover block 4 (22:00-02:00) and block 5 (02:00-06:00) with FT starting at block 4 (22:00).
-    // This is the ONLY valid shift that covers these blocks without violating constraints:
-    // - No shift starts after Midnight (00:00)
-    // - No shift ends before 5 AM (05:00)
-    const requiredBlock4FT = Math.max(uncovered[4], uncovered[5]);
-    for (let k = 0; k < requiredBlock4FT; k++) {
-        neededShifts.push({
-            day: dayData.day,
-            dayIndex: dayIdx,
-            blockIndex: 4,
-            type: 'FT',
-            durationHours: 8,
-        });
-        uncovered[4]--;
-        uncovered[5]--;
-    }
-
-    // Priority 2: FT (8h) for remaining valid blocks (0, 1, 2)
-    for (let i = 0; i < TIME_BLOCKS.length; i++) {
-      const currentBlock = i;
-      const nextBlock = (i + 1) % TIME_BLOCKS.length;
-      
-      // Valid FT start blocks: 0, 1, 2
-      if (currentBlock === 0 || currentBlock === 1 || currentBlock === 2) { 
-        while (uncovered[currentBlock] > 0 && uncovered[nextBlock] > 0) {
-          neededShifts.push({
-            day: dayData.day,
-            dayIndex: dayIdx,
-            blockIndex: currentBlock,
-            type: 'FT',
-            durationHours: 8, 
-          });
-          uncovered[currentBlock]--;
-          uncovered[nextBlock]--;
+      const evaluate = (s: number, type: 'FT'|'PT', workHours: number, duration: number) => {
+        if (!isValidShift(s, duration)) return;
+        let covered = 0;
+        for (let i = 0; i < workHours; i++) {
+          if (uncovered[(s + i) % 24] > 0) covered++;
         }
+        if (covered === 0) return;
+        
+        const efficiency = covered / workHours;
+        
+        if (efficiency > maxEfficiency) {
+          maxEfficiency = efficiency;
+          bestShift = { start: s, type, covered, efficiency };
+        } else if (efficiency === maxEfficiency) {
+            // Tie breaker: prefer the one that covers MORE hours (FT over PT)
+            if (bestShift && covered > bestShift.covered) {
+                bestShift = { start: s, type, covered, efficiency };
+            }
+        }
+      };
+
+      for (let s = 0; s < 24; s++) {
+        evaluate(s, 'FT', 8, 9);
+        evaluate(s, 'PT', 4, 4);
       }
-    }
 
-    // Priority 3: PT (4h) for remaining valid blocks (0, 1, 2, 3)
-    for (let i = 0; i < TIME_BLOCKS.length; i++) {
-      // Valid PT start blocks: 0, 1, 2, 3
-      if (i === 0 || i === 1 || i === 2 || i === 3) {
-        while (uncovered[i] > 0) {
-          neededShifts.push({
-            day: dayData.day,
-            dayIndex: dayIdx,
-            blockIndex: i,
-            type: 'PT',
-            durationHours: 4,
-          });
-          uncovered[i]--;
-        }
+      if (!bestShift) {
+        // If we can't find a valid shift to cover remaining demand, we must break to avoid infinite loop.
+        // This shouldn't happen with our valid shift rules, but just in case.
+        break;
+      }
+
+      neededShifts.push({
+        day: dayData.day,
+        dayIndex: dayIdx,
+        startHour: bestShift.start,
+        type: bestShift.type,
+        durationHours: bestShift.type === 'FT' ? 8 : 4
+      });
+
+      const workHours = bestShift.type === 'FT' ? 8 : 4;
+      for (let i = 0; i < workHours; i++) {
+        uncovered[(bestShift.start + i) % 24]--;
       }
     }
   });
@@ -89,9 +92,9 @@ export const generateAlgorithmicStaffingPlan = (
   const roster: AssociateRoster[] = [];
 
   // Helper to find and remove a specific shift from the pool
-  const popShift = (dayIdx: number, blockIdx: number, type: 'FT' | 'PT'): ShiftUnit | null => {
+  const popShift = (dayIdx: number, startHour: number, type: 'FT' | 'PT'): ShiftUnit | null => {
     const idx = neededShifts.findIndex(s => 
-      s.dayIndex === dayIdx && s.blockIndex === blockIdx && s.type === type
+      s.dayIndex === dayIdx && s.startHour === startHour && s.type === type
     );
     if (idx !== -1) {
       return neededShifts.splice(idx, 1)[0];
@@ -130,7 +133,7 @@ export const generateAlgorithmicStaffingPlan = (
     const countsByDay = Array(7).fill(0);
     
     neededShifts.forEach(s => {
-      if (s.blockIndex === seed.blockIndex && s.type === seed.type) {
+      if (s.startHour === seed.startHour && s.type === seed.type) {
         availabilityByDay[s.dayIndex] = true;
         countsByDay[s.dayIndex]++;
       }
@@ -166,14 +169,14 @@ export const generateAlgorithmicStaffingPlan = (
 
       workDaysSet.forEach(dIdx => {
         const dayName = getDayName(dIdx);
-        const realShift = popShift(dIdx, seed.blockIndex, seed.type);
+        const realShift = popShift(dIdx, seed.startHour, seed.type);
         
         if (realShift) {
-          newAssociate.schedule[dayName] = formatShiftTime(realShift.blockIndex, realShift.type);
+          newAssociate.schedule[dayName] = formatShiftTime(realShift.startHour, realShift.type);
           newAssociate.totalHours += realShift.durationHours;
         } else {
           // Overstaff
-          newAssociate.schedule[dayName] = formatShiftTime(seed.blockIndex, seed.type);
+          newAssociate.schedule[dayName] = formatShiftTime(seed.startHour, seed.type);
           newAssociate.totalHours += seed.durationHours;
         }
       });
@@ -192,22 +195,22 @@ export const generateAlgorithmicStaffingPlan = (
       };
 
       // Sat
-      const satShift = popShift(5, seed.blockIndex, seed.type);
+      const satShift = popShift(5, seed.startHour, seed.type);
       if (satShift) {
-        newAssociate.schedule['Sat'] = formatShiftTime(satShift.blockIndex, satShift.type);
+        newAssociate.schedule['Sat'] = formatShiftTime(satShift.startHour, satShift.type);
         newAssociate.totalHours += satShift.durationHours;
       } else {
-        newAssociate.schedule['Sat'] = formatShiftTime(seed.blockIndex, seed.type);
+        newAssociate.schedule['Sat'] = formatShiftTime(seed.startHour, seed.type);
         newAssociate.totalHours += seed.durationHours;
       }
 
       // Sun
-      const sunShift = popShift(6, seed.blockIndex, seed.type);
+      const sunShift = popShift(6, seed.startHour, seed.type);
       if (sunShift) {
-        newAssociate.schedule['Sun'] = formatShiftTime(sunShift.blockIndex, sunShift.type);
+        newAssociate.schedule['Sun'] = formatShiftTime(sunShift.startHour, sunShift.type);
         newAssociate.totalHours += sunShift.durationHours;
       } else {
-        newAssociate.schedule['Sun'] = formatShiftTime(seed.blockIndex, seed.type);
+        newAssociate.schedule['Sun'] = formatShiftTime(seed.startHour, seed.type);
         newAssociate.totalHours += seed.durationHours;
       }
       
@@ -228,37 +231,38 @@ export const generateAlgorithmicStaffingPlan = (
     if (ptCount <= ptLimit) break;
     if (ptCount === 0) break; 
 
-    // Find a PT candidate to promote (prefer those NOT starting at block 3, as FT at block 3 is invalid)
-    let candidateIdx = roster.findIndex(r => r.role === 'Part Time' && !Object.values(r.schedule).some(s => s.startsWith('18:00')));
-    if (candidateIdx === -1) {
-        candidateIdx = roster.findIndex(r => r.role === 'Part Time');
-    }
+    // Find a PT candidate to promote
+    let candidateIdx = roster.findIndex(r => r.role === 'Part Time');
     if (candidateIdx === -1) break;
 
     const candidate = roster[candidateIdx];
     candidate.role = 'Full Time';
     
     // Upgrade their shifts: 4h -> 9h(8h work)
-    // We assume the PT block index is inferred from their start time
     Object.keys(candidate.schedule).forEach(k => {
       const day = k as DayOfWeek;
       const shift = candidate.schedule[day];
       if (shift !== 'OFF') {
         const startHour = parseInt(shift.split(':')[0]);
-        // Re-calc block index
-        let blockIndex = -1;
-        if (startHour >= 6) blockIndex = (startHour - 6) / 4;
-        else if (startHour === 2) blockIndex = 5;
         
-        if (blockIndex !== -1) {
-            // If blockIndex is 3 (18:00), we cannot make it an FT shift because it would end at 03:00 (invalid).
-            // So we shift it to block 2 (14:00) to keep it valid.
-            if (blockIndex === 3) {
-                blockIndex = 2;
+        // Try to keep the same start hour if valid for FT
+        let newStartHour = startHour;
+        if (!isValidShift(newStartHour, 9)) {
+            // Find the closest valid FT start hour
+            for (let offset = 1; offset <= 12; offset++) {
+                if (isValidShift((startHour - offset + 24) % 24, 9)) {
+                    newStartHour = (startHour - offset + 24) % 24;
+                    break;
+                }
+                if (isValidShift((startHour + offset) % 24, 9)) {
+                    newStartHour = (startHour + offset) % 24;
+                    break;
+                }
             }
-            candidate.schedule[day] = formatShiftTime(blockIndex, 'FT');
-            candidate.totalHours += 4; // Add 4 hours (4->8)
         }
+        
+        candidate.schedule[day] = formatShiftTime(newStartHour, 'FT');
+        candidate.totalHours += 4; // Add 4 hours (4->8)
       }
     });
   }
@@ -280,16 +284,17 @@ export const generateAlgorithmicStaffingPlan = (
     candidate.role = 'Full Time';
     
     // Upgrade: Keep Sat/Sun as FT (8h), Add Mon-Thu as FT (8h)
-    // Get Sat block info to reuse start time
-    let blockIndex = 0; // default
+    let startHour = 6; // default
     const satShift = candidate.schedule['Sat'];
     if (satShift !== 'OFF') {
-        const startHour = parseInt(satShift.split(':')[0]);
-        if (startHour >= 6) blockIndex = (startHour - 6) / 4;
-        else if (startHour === 2) blockIndex = 5;
+        startHour = parseInt(satShift.split(':')[0]);
     }
 
-    const ftTime = formatShiftTime(blockIndex, 'FT');
+    if (!isValidShift(startHour, 9)) {
+        startHour = 6; // Fallback to a safe FT start hour
+    }
+
+    const ftTime = formatShiftTime(startHour, 'FT');
     
     // Assign 6 days (Mon-Thu + Sat/Sun)
     ['Mon', 'Tue', 'Wed', 'Thu', 'Sat', 'Sun'].forEach(d => {
@@ -321,7 +326,7 @@ export const generateAlgorithmicStaffingPlan = (
   });
 
   // --- Step 5: Stats ---
-  const totalVolume = demandData.reduce((sum, d) => sum + Object.values(d.blocks).reduce((a, b) => a + b, 0), 0);
+  const totalVolume = demandData.reduce((sum, d) => sum + d.hours.reduce((a, b) => a + b, 0), 0);
   const totalHours = roster.reduce((sum, a) => sum + a.totalHours, 0);
   const requiredHours = totalVolume / constraints.avgProductivity;
   const calculatedUtilization = totalHours > 0 ? (requiredHours / totalHours) * 100 : 0;
@@ -358,13 +363,12 @@ const getDayName = (idx: number): DayOfWeek => {
   return days[idx];
 }
 
-const formatShiftTime = (startIndex: number, type: 'FT' | 'PT'): string => {
-  const startHour = 6 + (startIndex * 4);
+const formatShiftTime = (startHour: number, type: 'FT' | 'PT'): string => {
   const duration = type === 'FT' ? 9 : 4; 
   const endHour = (startHour + duration) % 24;
   
   const format = (h: number) => `${h.toString().padStart(2, '0')}:00`;
-  const startStr = format(startHour >= 24 ? startHour - 24 : startHour);
+  const startStr = format(startHour);
   const endStr = format(endHour);
   
   return `${startStr}-${endStr}`;

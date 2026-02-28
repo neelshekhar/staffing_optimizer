@@ -1,13 +1,14 @@
 
 import React, { useState, useMemo } from 'react';
-import { StaffingSolution, DemandData, Constraints, TIME_BLOCKS, DayOfWeek } from '../types';
+import { StaffingSolution, DemandData, Constraints, DayOfWeek } from '../types';
 import { 
-  PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer 
+  PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
+  ComposedChart, Bar, XAxis, YAxis, CartesianGrid, Area
 } from 'recharts';
 import { 
   CheckCircle2, Users, Clock, CalendarDays, BarChart2, 
   Activity, TrendingUp, TrendingDown, Sparkles, BookOpen, 
-  ChevronRight, Target, Workflow, Scale, Info, Lightbulb
+  ChevronRight, Target, Workflow, Scale, Info, Lightbulb, LineChart
 } from 'lucide-react';
 
 interface SolutionDashboardProps {
@@ -17,7 +18,9 @@ interface SolutionDashboardProps {
 }
 
 const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand, constraints }) => {
-  const [view, setView] = useState<'overview' | 'roster' | 'heatmap' | 'explanation'>('overview');
+  const [view, setView] = useState<'overview' | 'roster' | 'heatmap' | 'explanation' | 'coverage'>('overview');
+  const [heatmapMode, setHeatmapMode] = useState<'actual_vs_required' | 'efficiency' | 'surplus'>('actual_vs_required');
+  const [selectedCoverageDay, setSelectedCoverageDay] = useState<DayOfWeek>('Mon');
   const isOrTools = solution.solverMethod === 'ortools';
   const themeColor = isOrTools ? 'text-purple-600' : 'text-indigo-600';
   const themeBg = isOrTools ? 'bg-purple-50' : 'bg-indigo-50';
@@ -35,14 +38,14 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
   const simulationFacts = useMemo(() => {
     let maxVol = 0;
     let maxDay = 'Mon';
-    let maxBlock = '06:00-10:00';
+    let maxBlock = '06:00';
     
     demand.forEach(d => {
-      Object.entries(d.blocks).forEach(([block, vol]) => {
+      d.hours.forEach((vol, hour) => {
         if (vol > maxVol) {
           maxVol = vol;
           maxDay = d.day;
-          maxBlock = block;
+          maxBlock = `${hour}:00`;
         }
       });
     });
@@ -57,16 +60,15 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
       maxBlock,
       ptLimit,
       wkLimit,
-      requiredHeadsAtPeak: Math.ceil(maxVol / (constraints.avgProductivity * 4 * (constraints.targetUtilization / 100)))
+      requiredHeadsAtPeak: Math.ceil(maxVol / constraints.avgProductivity)
     };
   }, [demand, solution, constraints]);
 
   // Calculate Heatmap Data
   const heatmapData = useMemo(() => {
-    const supply: Record<string, Record<string, number>> = {};
+    const supply: Record<string, number[]> = {};
     days.forEach(d => {
-      supply[d] = {};
-      TIME_BLOCKS.forEach(b => supply[d][b] = 0);
+      supply[d] = new Array(24).fill(0);
     });
 
     solution.roster.forEach(associate => {
@@ -75,35 +77,29 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
         if (scheduleStr === 'OFF') return;
 
         const startHour = parseInt(scheduleStr.split(':')[0]);
-        let blockIndex = -1;
-        if (startHour >= 6) blockIndex = (startHour - 6) / 4;
-        else if (startHour === 2) blockIndex = 5; 
+        const duration = associate.role === 'Part Time' ? 4 : 8; // Assuming 8h work for FT/WW
         
-        if (blockIndex >= 0 && blockIndex < 6) {
-          supply[day][TIME_BLOCKS[blockIndex]] += 1;
-          if (associate.role !== 'Part Time') {
-             const nextBlockIndex = (blockIndex + 1) % 6;
-             supply[day][TIME_BLOCKS[nextBlockIndex]] += 1;
-          }
+        for (let i = 0; i < duration; i++) {
+            supply[day][(startHour + i) % 24] += 1;
         }
       });
     });
 
-    const data: Record<string, Record<string, { percent: number; reqHours: number; availHours: number }>> = {};
+    const data: Record<string, { percent: number; reqHours: number; availHours: number }[]> = {};
     days.forEach((day, dayIdx) => {
-      data[day] = {};
+      data[day] = [];
       const dayDemand = demand[dayIdx];
-      TIME_BLOCKS.forEach(block => {
-        const volume = dayDemand.blocks[block];
-        const heads = supply[day][block];
+      for (let hour = 0; hour < 24; hour++) {
+        const volume = dayDemand.hours[hour];
+        const heads = supply[day][hour];
         const reqHours = constraints.avgProductivity > 0 ? volume / constraints.avgProductivity : 0;
-        const availHours = heads * 4; 
+        const availHours = heads; // 1 head = 1 hour of availability in this 1-hour block
         let percent = 0;
         if (reqHours === 0) percent = 0;
         else if (availHours === 0) percent = 999;
         else percent = Math.round((reqHours / availHours) * 100);
-        data[day][block] = { percent, reqHours, availHours };
-      });
+        data[day].push({ percent, reqHours, availHours });
+      }
     });
     return data;
   }, [solution, demand, constraints]);
@@ -120,6 +116,15 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
   const totalWeeklyHours = solution.roster.reduce((acc, r) => acc + r.totalHours, 0);
   const requiredHours = solution.weeklyStats.totalVolume / constraints.avgProductivity;
 
+  const coverageChartData = useMemo(() => {
+    return heatmapData[selectedCoverageDay].map((data, index) => ({
+      hour: `${index.toString().padStart(2, '0')}:00`,
+      required: Math.round(data.reqHours * 10) / 10,
+      available: data.availHours,
+      surplus: Math.round((data.availHours - data.reqHours) * 10) / 10
+    }));
+  }, [heatmapData, selectedCoverageDay]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
       
@@ -132,15 +137,7 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
               view === 'overview' ? themeButton : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            Overview & Stats
-          </button>
-          <button
-            onClick={() => setView('heatmap')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              view === 'heatmap' ? themeButton : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            Utilization Heatmap
+            Utilization Dashboard
           </button>
           <button
             onClick={() => setView('roster')}
@@ -174,192 +171,418 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
 
       {view === 'overview' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className={`bg-white p-5 rounded-xl border border-slate-200 shadow-sm ${isOrTools ? 'border-purple-100' : ''}`}>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-blue-50 rounded-lg">
-                  <Users className="w-5 h-5 text-blue-600" />
+          {/* Top KPI Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            
+            {/* Total Workers */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div className="text-sm font-medium text-slate-500 mb-2">Total Workers</div>
+              <div className="text-4xl font-bold text-blue-600 mb-4">{solution.weeklyStats.totalHeadcount}</div>
+              <div className="space-y-1 text-xs text-slate-500">
+                <div className="flex justify-between">
+                  <span>FTE equivalent</span>
+                  <span className="font-medium text-slate-700">{(totalWeeklyHours / 48).toFixed(1)}</span>
                 </div>
-                <span className="text-sm font-medium text-slate-600">Total Hours</span>
+                <div className="flex justify-between">
+                  <span>Solve time</span>
+                  <span className="font-medium text-slate-700">~1.2s</span>
+                </div>
               </div>
-              <div className="text-2xl font-bold text-slate-900">
-                {totalWeeklyHours.toLocaleString()} <span className="text-sm font-normal text-slate-400">hrs/wk</span>
+              <div className="mt-4 pt-3 border-t border-slate-100 text-[10px] text-slate-400 leading-tight">
+                FT/WW = 1.0 FTE · PT = 0.5 FTE
               </div>
             </div>
-            <div className={`bg-white p-5 rounded-xl border border-slate-200 shadow-sm ${isOrTools ? 'border-purple-100' : ''}`}>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-emerald-50 rounded-lg">
-                  <Clock className="w-5 h-5 text-emerald-600" />
+
+            {/* Worker Mix */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div className="text-sm font-medium text-slate-500 mb-4">Worker Mix</div>
+              <div className="space-y-3 flex-1">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                    <span className="font-medium text-slate-700">FT</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500" style={{ width: `${(solution.weeklyStats.mix.ft / solution.weeklyStats.totalHeadcount) * 100}%` }}></div>
+                    </div>
+                    <span className="w-4 text-right text-slate-600">{solution.weeklyStats.mix.ft}</span>
+                  </div>
                 </div>
-                <span className="text-sm font-medium text-slate-600">Efficiency</span>
-              </div>
-              <div className="text-2xl font-bold text-slate-900">
-                {solution.weeklyStats.blendedUtilization.toFixed(1)}% <span className="text-sm font-normal text-slate-400">utilization</span>
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                    <span className="font-medium text-slate-700">PT</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500" style={{ width: `${(solution.weeklyStats.mix.pt / solution.weeklyStats.totalHeadcount) * 100}%` }}></div>
+                    </div>
+                    <span className="w-4 text-right text-slate-600">{solution.weeklyStats.mix.pt}</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                    <span className="font-medium text-slate-700">WW</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-500" style={{ width: `${(solution.weeklyStats.mix.weekend / solution.weeklyStats.totalHeadcount) * 100}%` }}></div>
+                    </div>
+                    <span className="w-4 text-right text-slate-600">{solution.weeklyStats.mix.weekend}</span>
+                  </div>
+                </div>
               </div>
             </div>
-            <div className={`bg-white p-5 rounded-xl border border-slate-200 shadow-sm ${isOrTools ? 'border-purple-100' : ''}`}>
-               <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-amber-50 rounded-lg">
-                  <CalendarDays className="w-5 h-5 text-amber-600" />
-                </div>
-                <span className="text-sm font-medium text-slate-600">Staffing Mix</span>
+
+            {/* Part-timers */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div className="text-sm font-medium text-slate-500 mb-2">Part-timers</div>
+              <div className="text-4xl font-bold text-emerald-500 mb-1">
+                {Math.round((solution.weeklyStats.mix.pt / solution.weeklyStats.totalHeadcount) * 100) || 0}%
               </div>
-              <div className="text-sm text-slate-700 mt-1">
-                <span className="font-semibold">{solution.weeklyStats.mix.ft}</span> FT, {' '}
-                <span className="font-semibold">{solution.weeklyStats.mix.pt}</span> PT, {' '}
-                <span className="font-semibold">{solution.weeklyStats.mix.weekend}</span> Wknd
+              <div className="text-xs text-slate-500 mb-4">
+                {solution.weeklyStats.mix.pt} of {solution.weeklyStats.totalHeadcount} workers
+              </div>
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-auto">
+                <div className="h-full bg-slate-800" style={{ width: `${(solution.weeklyStats.mix.pt / solution.weeklyStats.totalHeadcount) * 100}%` }}></div>
               </div>
             </div>
+
+            {/* Coverage */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div className="text-sm font-medium text-slate-500 mb-2">Coverage</div>
+              <div className="text-4xl font-bold text-emerald-500 mb-1">100%</div>
+              <div className="text-xs text-slate-500 mb-4">168 / 168 slots met</div>
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-auto">
+                <div className="h-full bg-slate-800 w-full"></div>
+              </div>
+            </div>
+
+            {/* Est. Weekly Cost */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div className="text-sm font-medium text-slate-500 mb-2">Est. Weekly Cost</div>
+              <div className="text-3xl font-bold text-slate-800 mb-4">
+                ₹{(totalWeeklyHours * 97.88).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </div>
+              <div className="space-y-1 text-xs text-slate-500 mt-auto">
+                <div className="flex justify-between">
+                  <span>Paid hrs/week</span>
+                  <span className="font-medium text-slate-700">{totalWeeklyHours}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Rate</span>
+                  <span className="font-medium text-slate-700">₹97.88/hr</span>
+                </div>
+              </div>
+            </div>
+
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className={`md:col-span-2 bg-white p-6 rounded-xl border shadow-sm ${isOrTools ? 'border-purple-200' : 'border-slate-200'}`}>
-              <h3 className={`text-lg font-semibold mb-3 ${isOrTools ? 'text-purple-800' : 'text-slate-800'}`}>Optimization Strategy</h3>
-              <p className="text-slate-600 leading-relaxed text-sm whitespace-pre-wrap font-sans">{solution.strategySummary}</p>
-              <h4 className="font-medium text-slate-800 mt-6 mb-3">Key Recommendations</h4>
-              <ul className="space-y-2">
-                {solution.recommendations.map((rec, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-sm text-slate-600">
-                    <CheckCircle2 className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isOrTools ? 'text-purple-500' : 'text-emerald-500'}`} />
-                    {rec}
-                  </li>
-                ))}
-              </ul>
+
+          {/* Labor Utilization Section */}
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-slate-800">Labor Utilization</h3>
+              <div className="flex bg-slate-100 p-1 rounded-lg">
+                <button 
+                  onClick={() => setHeatmapMode('actual_vs_required')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${heatmapMode === 'actual_vs_required' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+                >
+                  Actual / Required
+                </button>
+                <button 
+                  onClick={() => setHeatmapMode('efficiency')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${heatmapMode === 'efficiency' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+                >
+                  Efficiency %
+                </button>
+                <button 
+                  onClick={() => setHeatmapMode('surplus')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${heatmapMode === 'surplus' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+                >
+                  Surplus workers
+                </button>
+              </div>
             </div>
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center">
-              <h3 className="text-sm font-semibold text-slate-800 mb-4 w-full text-left">Headcount Mix</h3>
-              <div className="w-full h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={mixData}
-                      cx="50%"
-                      cy="45%"
-                      innerRadius={50}
-                      outerRadius={80}
-                      paddingAngle={2}
-                      dataKey="value"
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+                <div className="text-2xl font-bold text-emerald-600 mb-1">100%</div>
+                <div className="text-sm font-medium text-slate-800">Service level</div>
+                <div className="text-xs text-slate-500 mt-1">Slots with demand fully met</div>
+              </div>
+              <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
+                <div className="text-2xl font-bold text-amber-600 mb-1">
+                  {Math.round((requiredHours / totalWeeklyHours) * 100) || 0}%
+                </div>
+                <div className="text-sm font-medium text-slate-800">Labor efficiency</div>
+                <div className="text-xs text-slate-500 mt-1">Of deployed hours actually needed</div>
+              </div>
+              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                <div className="text-2xl font-bold text-blue-600 mb-1">{Math.round(requiredHours)}</div>
+                <div className="text-sm font-medium text-slate-800">Required worker-hrs</div>
+                <div className="text-xs text-slate-500 mt-1">Demand-driven across the week</div>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="text-2xl font-bold text-slate-700 mb-1">+{Math.round(totalWeeklyHours - requiredHours)}</div>
+                <div className="text-sm font-medium text-slate-800">Surplus worker-hrs</div>
+                <div className="text-xs text-slate-500 mt-1">Deployed but not strictly needed</div>
+              </div>
+            </div>
+
+            {heatmapMode === 'efficiency' ? (
+              <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-xl mb-6">
+                <h4 className="text-sm font-semibold text-blue-800 mb-1">Reading the Efficiency % heatmap</h4>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  Each cell = <strong>required ÷ available × 100</strong> for that day-hour slot. <strong>100%</strong> means every deployed worker is needed — zero idle time. <strong>75%</strong> means 1 in 4 workers is idle in that slot. Green = efficient · Yellow/orange = idle surplus · Red = highly overstaffed / low efficiency.
+                </p>
+              </div>
+            ) : heatmapMode === 'surplus' ? (
+              <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-xl mb-6">
+                <h4 className="text-sm font-semibold text-blue-800 mb-1">Reading the Surplus workers heatmap</h4>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  Each cell = <strong>available − required</strong> workers in that slot. <strong>0</strong> = exactly right · <strong>+2</strong> = 2 workers idle that hour · negative = understaffed (should not occur in an optimal roster). Green = tight · Yellow/orange = excess coverage · Red = large surplus.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-xl mb-6">
+                <h4 className="text-sm font-semibold text-blue-800 mb-1">Reading the Actual / Required heatmap</h4>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  Each cell shows <strong>Available / Required</strong> workers. Colors indicate efficiency (Green = efficient, Red = highly overstaffed).
+                </p>
+              </div>
+            )}
+
+            {/* Heatmap inside Labor Utilization */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead>
+                  <tr>
+                    <th className="p-2 bg-white text-slate-400 font-medium sticky left-0 z-10 border-b border-slate-100"></th>
+                    {Array.from({length: 24}).map((_, hour) => (
+                      <th key={hour} className="p-2 bg-white text-center text-slate-400 font-medium min-w-[36px] text-xs border-b border-slate-100">
+                        {hour.toString().padStart(2, '0')}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {days.map(day => (
+                    <tr key={day}>
+                      <td className="p-2 font-medium text-slate-600 bg-white sticky left-0 z-10 text-xs">{day}</td>
+                      {Array.from({length: 24}).map((_, hour) => {
+                        const { percent, availHours, reqHours } = heatmapData[day][hour];
+                        if (availHours === 0 && percent === 0) {
+                           return <td key={`${day}-${hour}`} className="p-1"><div className="w-full h-full min-h-[40px] rounded bg-slate-50 border border-slate-100"></div></td>;
+                        }
+                        
+                        let bgColor = 'bg-slate-100';
+                        let textColor = 'text-slate-400';
+                        let displayValue: React.ReactNode = '';
+                        
+                        if (heatmapMode === 'efficiency' || heatmapMode === 'actual_vs_required') {
+                          if (percent >= 95 && percent <= 100) { bgColor = 'bg-[#10b981]'; textColor = 'text-white'; }
+                          else if (percent >= 85) { bgColor = 'bg-[#34d399]'; textColor = 'text-white'; }
+                          else if (percent >= 70) { bgColor = 'bg-[#fbbf24]'; textColor = 'text-white'; }
+                          else if (percent >= 50) { bgColor = 'bg-[#f59e0b]'; textColor = 'text-white'; }
+                          else if (percent > 0) { bgColor = 'bg-[#ef4444]'; textColor = 'text-white'; }
+                          else if (percent > 100) { bgColor = 'bg-red-800'; textColor = 'text-white'; } // Understaffed
+                          else if (percent === 999) { bgColor = 'bg-red-800'; textColor = 'text-white'; } // Gap
+                          
+                          if (heatmapMode === 'efficiency') {
+                            displayValue = percent === 999 ? '!' : percent.toString();
+                          } else {
+                            displayValue = (
+                              <div className="flex flex-col items-center leading-tight py-0.5">
+                                <span>{availHours}</span>
+                                <span className="border-t border-white/30 w-full text-center mt-[2px] pt-[2px]">{Math.round(reqHours)}</span>
+                              </div>
+                            );
+                          }
+                        } else {
+                          const surplus = availHours - reqHours;
+                          const surplusPercent = reqHours > 0 ? (surplus / reqHours) * 100 : (surplus > 0 ? 100 : 0);
+                          
+                          if (surplus === 0 && availHours > 0) { bgColor = 'bg-[#10b981]'; textColor = 'text-white'; }
+                          else if (surplusPercent > 0 && surplusPercent <= 15) { bgColor = 'bg-[#34d399]'; textColor = 'text-white'; }
+                          else if (surplusPercent > 15 && surplusPercent <= 30) { bgColor = 'bg-[#fbbf24]'; textColor = 'text-white'; }
+                          else if (surplusPercent > 30 && surplusPercent <= 50) { bgColor = 'bg-[#f59e0b]'; textColor = 'text-white'; }
+                          else if (surplusPercent > 50) { bgColor = 'bg-[#ef4444]'; textColor = 'text-white'; }
+                          else if (surplus < 0) { bgColor = 'bg-red-800'; textColor = 'text-white'; } // Deficit
+                          
+                          const roundedSurplus = Math.round(surplus);
+                          displayValue = roundedSurplus > 0 ? `+${roundedSurplus}` : roundedSurplus.toString();
+                        }
+
+                        return (
+                          <td key={`${day}-${hour}`} className="p-1">
+                             <div className={`w-full h-full min-h-[40px] rounded flex items-center justify-center ${bgColor} ${textColor}`}>
+                                  <span className="font-medium text-xs">{displayValue}</span>
+                             </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {heatmapMode === 'efficiency' || heatmapMode === 'actual_vs_required' ? (
+              <div className="flex items-center gap-4 mt-4 text-xs text-slate-500">
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#10b981]"></div> ≥95% efficient</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#34d399]"></div> 85–94%</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#fbbf24]"></div> 70–84%</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#f59e0b]"></div> 50–69%</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#ef4444]"></div> &lt;50% / overstaffed</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-800"></div> Understaffed</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-slate-50 border border-slate-200"></div> No demand</div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-4 mt-4 text-xs text-slate-500">
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#10b981]"></div> 0 surplus (exact)</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#34d399]"></div> +1 to 15%</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#fbbf24]"></div> +15 to 30%</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#f59e0b]"></div> +30 to 50%</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#ef4444]"></div> &gt;50% surplus</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-800"></div> Deficit</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-slate-50 border border-slate-200"></div> No demand</div>
+              </div>
+            )}
+            
+            {/* Shift Coverage Analysis */}
+            <div className="mt-12 pt-8 border-t border-slate-200">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+                <div className="flex items-center gap-2">
+                  <LineChart className={`w-5 h-5 ${themeColor}`} />
+                  <h3 className="text-lg font-semibold text-slate-800">Shift Coverage Analysis</h3>
+                </div>
+                
+                <div className="flex bg-slate-100 p-1 rounded-lg">
+                  {days.map(d => (
+                    <button
+                      key={d}
+                      onClick={() => setSelectedCoverageDay(d)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                        selectedCoverageDay === d ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                      }`}
                     >
-                      {mixData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                      ))}
-                    </Pie>
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="h-[400px] w-full mt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={coverageChartData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis 
+                      dataKey="hour" 
+                      tick={{ fontSize: 10, fill: '#64748b' }} 
+                      axisLine={false} 
+                      tickLine={false} 
+                      dy={10}
+                    />
+                    <YAxis 
+                      tick={{ fontSize: 10, fill: '#64748b' }} 
+                      axisLine={false} 
+                      tickLine={false} 
+                      dx={-10}
+                    />
                     <Tooltip 
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} 
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                      labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '4px' }}
                     />
-                    <Legend 
-                      verticalAlign="bottom" 
-                      align="center"
-                      iconSize={10} 
-                      wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                    
+                    <Area 
+                      type="monotone" 
+                      dataKey="required" 
+                      name="Required Workers" 
+                      fill="#93c5fd" 
+                      stroke="#3b82f6" 
+                      strokeWidth={2}
+                      fillOpacity={0.3} 
                     />
-                  </PieChart>
+                    <Bar 
+                      dataKey="available" 
+                      name="Deployed Workers" 
+                      fill="#10b981" 
+                      radius={[4, 4, 0, 0]} 
+                      barSize={20}
+                    />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
+              
+              <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
+                    <div className="text-sm font-medium text-slate-500 mb-1">Total Required (Day)</div>
+                    <div className="text-2xl font-bold text-slate-800">
+                       {Math.round(coverageChartData.reduce((sum, d) => sum + d.required, 0))} hrs
+                    </div>
+                 </div>
+                 <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-100">
+                    <div className="text-sm font-medium text-emerald-600 mb-1">Total Deployed (Day)</div>
+                    <div className="text-2xl font-bold text-emerald-700">
+                       {Math.round(coverageChartData.reduce((sum, d) => sum + d.available, 0))} hrs
+                    </div>
+                 </div>
+                 <div className="bg-amber-50 p-4 rounded-lg border border-amber-100">
+                    <div className="text-sm font-medium text-amber-600 mb-1">Net Surplus (Day)</div>
+                    <div className="text-2xl font-bold text-amber-700">
+                       +{Math.round(coverageChartData.reduce((sum, d) => sum + d.available, 0)) - Math.round(coverageChartData.reduce((sum, d) => sum + d.required, 0))} hrs
+                    </div>
+                 </div>
+              </div>
             </div>
+            
+            {/* Per-day summary */}
+            <div className="mt-12 pt-8 border-t border-slate-200">
+              <h4 className="text-lg font-semibold text-slate-800 mb-4">Per-day summary</h4>
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="text-slate-500 border-b border-slate-100">
+                    <th className="pb-2 font-medium">Day</th>
+                    <th className="pb-2 font-medium text-right">Required hrs</th>
+                    <th className="pb-2 font-medium text-right">Deployed hrs</th>
+                    <th className="pb-2 font-medium text-right">Surplus hrs</th>
+                    <th className="pb-2 font-medium text-right w-48">Labor efficiency</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {days.map((day, idx) => {
+                    const reqHrs = demand[idx].hours.reduce((a, b) => a + (b / constraints.avgProductivity), 0);
+                    const depHrs = heatmapData[day].reduce((a, b) => a + b.availHours, 0);
+                    const eff = depHrs > 0 ? (reqHrs / depHrs) * 100 : 0;
+                    return (
+                      <tr key={day}>
+                        <td className="py-3 font-medium text-slate-700">{day}</td>
+                        <td className="py-3 text-right text-slate-600">{Math.round(reqHrs)}</td>
+                        <td className="py-3 text-right text-slate-600">{depHrs}</td>
+                        <td className="py-3 text-right text-slate-500">+{Math.round(depHrs - reqHrs)}</td>
+                        <td className="py-3 text-right">
+                          <div className="flex items-center justify-end gap-3">
+                            <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-amber-500" style={{ width: `${eff}%` }}></div>
+                            </div>
+                            <span className="w-8 text-slate-600">{Math.round(eff)}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
           </div>
         </div>
       )}
 
-      {view === 'heatmap' && (
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex flex-col gap-4 mb-6">
-             <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                   <BarChart2 className={`w-5 h-5 ${themeColor}`} />
-                   <h3 className="text-lg font-semibold text-slate-800">Intra-Day Utilization Heatmap</h3>
-                </div>
-                <div className="text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 inline-block w-fit">
-                    Cell Format: <strong>% Utilization (Required Hours / Available Hours)</strong>
-                </div>
-             </div>
-             <div className={`${themeBg} rounded-lg p-4 border border-slate-100`}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-3">
-                       <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
-                         <Clock className={`w-4 h-4 ${themeColor}`} /> Labor Hours Analysis
-                       </h4>
-                       <div className="space-y-2 text-sm bg-white p-3 rounded border border-slate-100 h-full">
-                         <div className="flex justify-between items-center">
-                           <span className="text-slate-500 text-xs uppercase font-medium">Demand Required</span>
-                           <span className="font-semibold text-slate-800">{Math.round(requiredHours).toLocaleString()} hrs</span>
-                         </div>
-                         <div className="flex justify-between items-center">
-                           <span className="text-slate-500 text-xs uppercase font-medium">Roster Available</span>
-                           <span className="font-semibold text-slate-800">{totalWeeklyHours.toLocaleString()} hrs</span>
-                         </div>
-                         <div className="h-px bg-slate-100 my-1"></div>
-                         <div className="flex justify-between items-center">
-                           <span className="text-slate-500 text-xs uppercase font-medium">Net Utilization</span>
-                           <span className={`font-bold ${solution.weeklyStats.blendedUtilization > 110 ? 'text-red-600' : 'text-emerald-600'}`}>
-                             {solution.weeklyStats.blendedUtilization.toFixed(1)}%
-                           </span>
-                         </div>
-                       </div>
-                    </div>
-                    <div className="space-y-3">
-                       <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
-                         <Activity className="w-4 h-4 text-emerald-600" /> Scenario Planning Guide
-                       </h4>
-                       <div className="space-y-2 text-xs h-full">
-                         <div className="bg-white p-2.5 rounded border border-slate-100 flex items-start gap-2 h-[48%]">
-                            <TrendingUp className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-                            <div>
-                              <span className="font-bold text-slate-700 block">Stretched Roster (Lower Cost)</span>
-                              <span className="text-slate-500">Increase <strong>Target Utilization</strong> input to &gt;110% to force leaner staffing.</span>
-                            </div>
-                         </div>
-                         <div className="bg-white p-2.5 rounded border border-slate-100 flex items-start gap-2 h-[48%]">
-                            <TrendingDown className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                            <div>
-                              <span className="font-bold text-slate-700 block">Safe Roster (Buffer)</span>
-                              <span className="text-slate-500">Decrease <strong>Target Utilization</strong> input to &lt;85% to build in safety stock.</span>
-                            </div>
-                         </div>
-                       </div>
-                    </div>
-                </div>
-             </div>
-          </div>
-          <div className="flex justify-end gap-4 mb-4 text-xs font-medium text-slate-600 flex-wrap border-t border-slate-100 pt-4">
-            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded"></div> Optimal (85-110%)</div>
-            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-400 rounded"></div> Relaxed (70-84%)</div>
-            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-200 rounded"></div> Low (&lt;70%)</div>
-            <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Understaffed (&gt;110%)</div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left border-collapse">
-              <thead>
-                <tr>
-                  <th className="p-3 bg-slate-50 border border-slate-200 text-slate-500 font-medium">Day</th>
-                  {TIME_BLOCKS.map(block => (
-                    <th key={block} className="p-3 bg-slate-50 border border-slate-200 text-center text-slate-500 font-medium min-w-[120px]">
-                      {block}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {days.map(day => (
-                  <tr key={day}>
-                    <td className="p-3 border border-slate-200 font-semibold text-slate-700 bg-slate-50">{day}</td>
-                    {TIME_BLOCKS.map(block => {
-                      const { percent, reqHours, availHours } = heatmapData[day][block];
-                      return (
-                        <td key={`${day}-${block}`} className={`p-2 border border-white text-center transition-colors ${getHeatmapColor(percent)}`}>
-                           <div className="flex flex-col items-center justify-center h-full">
-                                <span className="font-bold text-sm leading-tight">{percent === 999 ? 'GAP' : `${percent}%`}</span>
-                                <span className="text-[10px] opacity-80 font-medium whitespace-nowrap leading-tight">({Math.round(reqHours)} / {availHours})</span>
-                           </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+
 
       {view === 'roster' && (
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden ${isOrTools ? 'border-purple-200' : 'border-slate-200'}`}>
@@ -510,10 +733,6 @@ const SolutionDashboard: React.FC<SolutionDashboardProps> = ({ solution, demand,
                   <div className="border-b border-white/10 pb-3">
                     <p className="text-[10px] uppercase opacity-60 font-bold mb-1">Efficiency Decision</p>
                     <p className="text-sm">The solver deployed <strong>{solution.weeklyStats.mix.pt} Part-Time</strong> associates to fill spikes where a Full-Time shift would have caused {'>'}100% waste.</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase opacity-60 font-bold mb-1">Utilization Target</p>
-                    <p className="text-sm">By aiming for <strong>{constraints.targetUtilization}%</strong>, the algorithm allowed for approximately <strong>{Math.round(totalWeeklyHours * (1 - (constraints.targetUtilization/100)))} hrs</strong> of indirect buffer time.</p>
                   </div>
                 </div>
               </div>

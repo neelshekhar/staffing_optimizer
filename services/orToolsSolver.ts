@@ -1,36 +1,28 @@
 
-import { AssociateRoster, Constraints, DemandData, StaffingSolution, TIME_BLOCKS, DayOfWeek, RoleType } from "../types";
+import highs from 'highs';
+import highsWasmUrl from 'highs/runtime?url';
+import { AssociateRoster, Constraints, DemandData, StaffingSolution, DayOfWeek, RoleType } from "../types";
 
 // --- Types & Constants for the Solver ---
 
 const DAYS: DayOfWeek[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-// Tuning Weights
-const REWARD_COVERED = 50; // High reward to ensure gaps are filled (Fixes "Unstaffed" issue)
-const PENALTY_BASE = 4;    // Low base penalty allows filling gaps even if it causes minor waste
-const PENALTY_COMPOUND = 3; // Extra penalty multiplier for deep overstaffing (Fixes "300%+" issue)
-
 // Represents a predefined valid schedule shape (Template)
 interface SchedulePattern {
   id: string;
   role: RoleType;
-  shifts: Record<DayOfWeek, number | null>; // null = OFF, number = start block index (0-5)
+  shifts: Record<DayOfWeek, number | null>; // null = OFF, number = start hour (0-23)
   weeklyHours: number;
   shiftDuration: number; // For formatting
+  workHours: number; // Actual hours of work covered
 }
 
-// Represents the residual demand curve
-type DemandMatrix = Record<DayOfWeek, number[]>; // Array of 6 integers per day
-
 // Helper to check if a shift is valid based on constraints
-const isValidShift = (startBlock: number, duration: number): boolean => {
-    const startHour = 6 + (startBlock * 4);
+const isValidShift = (startHour: number, duration: number): boolean => {
     const endHour = (startHour + duration) % 24;
     
-    const actualStartHour = startHour >= 24 ? startHour - 24 : startHour;
-    
     // No shift starts after Midnight (00:00)
-    if (actualStartHour > 0 && actualStartHour < 5) return false;
+    if (startHour > 0 && startHour < 5) return false;
     
     // No shift ends before 5 AM
     if (endHour > 0 && endHour < 5) return false;
@@ -40,15 +32,17 @@ const isValidShift = (startBlock: number, duration: number): boolean => {
 
 // --- 1. Pattern Generation (SolveShiftGeneration) ---
 // Instead of building shifts dynamically, we generate the "Universe of Valid Patterns"
-const generatePatterns = (): SchedulePattern[] => {
+const generatePatterns = (constraints: Constraints): SchedulePattern[] => {
   const patterns: SchedulePattern[] = [];
   
+  const maxOffDayIdx = constraints.allowWeekendOffs ? 7 : 5;
+  
   // A. Full Time Patterns (6 days work, 1 day off)
-  // Constraint: 6 days work, 1 day off (Any day).
-  // Shift: 9 hours (8h work + 1h break implies 2 blocks of coverage).
-  for (let offDayIdx = 0; offDayIdx < 7; offDayIdx++) {
-    for (let startBlock = 0; startBlock < 6; startBlock++) {
-      if (!isValidShift(startBlock, 9)) continue;
+  // Constraint: 6 days work, 1 day off.
+  // Shift: 9 hours (8h work + 1h break implies 8 hours of coverage).
+  for (let offDayIdx = 0; offDayIdx < maxOffDayIdx; offDayIdx++) {
+    for (let startHour = 0; startHour < 24; startHour++) {
+      if (!isValidShift(startHour, 9)) continue;
 
       const schedule: any = {};
       let hours = 0;
@@ -56,27 +50,28 @@ const generatePatterns = (): SchedulePattern[] => {
         if (idx === offDayIdx) {
           schedule[day] = null;
         } else {
-          schedule[day] = startBlock;
+          schedule[day] = startHour;
           hours += 8; // Assuming 8 productive hours in a 9h shift
         }
       });
 
       patterns.push({
-        id: `FT_OFF_${DAYS[offDayIdx]}_START_${startBlock}`,
+        id: `FT_OFF_${DAYS[offDayIdx]}_START_${startHour}`,
         role: 'Full Time',
         shifts: schedule,
         weeklyHours: hours,
-        shiftDuration: 9
+        shiftDuration: 9,
+        workHours: 8
       });
     }
   }
 
   // B. Part Time Patterns (6 days work, 1 day off)
   // Constraint: Same days as FT (6 days work, 1 day off).
-  // Shift: 4 hours (1 block).
-  for (let offDayIdx = 0; offDayIdx < 7; offDayIdx++) {
-    for (let startBlock = 0; startBlock < 6; startBlock++) {
-       if (!isValidShift(startBlock, 4)) continue;
+  // Shift: 4 hours (4h work).
+  for (let offDayIdx = 0; offDayIdx < maxOffDayIdx; offDayIdx++) {
+    for (let startHour = 0; startHour < 24; startHour++) {
+       if (!isValidShift(startHour, 4)) continue;
 
        const schedule: any = {};
        let hours = 0;
@@ -84,16 +79,17 @@ const generatePatterns = (): SchedulePattern[] => {
          if (idx === offDayIdx) {
            schedule[day] = null;
          } else {
-           schedule[day] = startBlock;
+           schedule[day] = startHour;
            hours += 4;
          }
        });
        patterns.push({
-         id: `PT_OFF_${DAYS[offDayIdx]}_START_${startBlock}`,
+         id: `PT_OFF_${DAYS[offDayIdx]}_START_${startHour}`,
          role: 'Part Time',
          shifts: schedule,
          weeklyHours: hours,
-         shiftDuration: 4
+         shiftDuration: 4,
+         workHours: 4
        });
     }
   }
@@ -101,159 +97,217 @@ const generatePatterns = (): SchedulePattern[] => {
   // C. Weekend Warrior (Sat + Sun only)
   // Constraint: Must work Sat AND Sun.
   // Shift: 9 hours (8h work).
-  for (let startBlock = 0; startBlock < 6; startBlock++) {
-    if (!isValidShift(startBlock, 9)) continue;
+  for (let startHour = 0; startHour < 24; startHour++) {
+    if (!isValidShift(startHour, 9)) continue;
 
     const schedule: any = {};
     let hours = 0;
     DAYS.forEach(day => {
       if (day === 'Sat' || day === 'Sun') {
-        schedule[day] = startBlock;
-        hours += 9; // 9 hours paid
+        schedule[day] = startHour;
+        hours += 8; // 8 hours paid/worked
       } else {
         schedule[day] = null;
       }
     });
     patterns.push({
-        id: `WW_START_${startBlock}`,
+        id: `WW_START_${startHour}`,
         role: 'Weekend Warrior',
         shifts: schedule,
         weeklyHours: hours,
-        shiftDuration: 9
+        shiftDuration: 9,
+        workHours: 8
     });
   }
 
   return patterns;
 };
 
-// --- 2. Solver Logic (SolveShiftScheduling) ---
+// --- 2. Solver Logic (Highs WASM) ---
 
-export const generateORToolsStaffingPlan = (
+export const generateORToolsStaffingPlan = async (
   demandData: DemandData[],
   constraints: Constraints
-): StaffingSolution => {
+): Promise<StaffingSolution> => {
   
   // 1. Initialize Demand Matrix (Net Required Headcount)
-  const requiredMatrix: DemandMatrix = {} as any;
   let totalVolume = 0;
+  const requiredHeadcount: number[] = []; // Flattened 168 hours
 
   DAYS.forEach((day, i) => {
-    requiredMatrix[day] = TIME_BLOCKS.map(block => {
-        const vol = demandData[i].blocks[block];
+    demandData[i].hours.forEach(vol => {
         totalVolume += vol;
-        const capacityPerPerson = constraints.avgProductivity * 4 * (constraints.targetUtilization / 100);
-        return Math.ceil(vol / capacityPerPerson);
+        const capacityPerPerson = constraints.avgProductivity;
+        requiredHeadcount.push(Math.ceil(vol / capacityPerPerson));
     });
   });
 
-  // Copy for mutation during solving
-  // residualMatrix tracks: >0 (Needed), <=0 (Met/Overstaffed)
-  const residualMatrix: DemandMatrix = JSON.parse(JSON.stringify(requiredMatrix));
+  const patterns = generatePatterns(constraints);
   
-  // Helper to calculate score of a pattern against residual demand
-  const calculatePatternScore = (pattern: SchedulePattern, currentMatrix: DemandMatrix): number => {
-    let score = 0;
-    let coveredCount = 0;
+  // Build the MILP model for Highs
+  // Minimize: sum(cost_j * x_j)
+  // Subject to: sum(A_ij * x_j) >= demand_i for all hours i
+  // x_j >= 0, integer
+  
+  let objective = "Minimize\n  obj: ";
+  const variables: string[] = [];
+  const constraints_str: string[] = [];
+  const bounds: string[] = [];
+  const generals: string[] = [];
+  
+  // Cost function: We want to minimize total hours scheduled.
+  // FT = 48 hours, PT = 24 hours, WW = 16 hours
+  patterns.forEach((p, j) => {
+      const varName = `x_${j}`;
+      variables.push(varName);
+      
+      // Add to objective function
+      if (j > 0) objective += " + ";
+      objective += `${p.weeklyHours} ${varName}`;
+      
+      // Bounds and Integer constraints
+      bounds.push(`  0 <= ${varName}`);
+      generals.push(`  ${varName}`);
+  });
+  
+  objective += "\n";
+  
+  // Coverage constraints
+  objective += "Subject To\n";
+  for (let i = 0; i < 168; i++) {
+      const dayIdx = Math.floor(i / 24);
+      const hourIdx = i % 24;
+      const day = DAYS[dayIdx];
+      const demand = requiredHeadcount[i];
+      
+      let constraintExpr = "";
+      let first = true;
+      
+      patterns.forEach((p, j) => {
+          const startHour = p.shifts[day];
+          if (startHour !== null) {
+              // Check if this pattern covers this specific hour
+              let covers = false;
+              for (let h = 0; h < p.workHours; h++) {
+                  if ((startHour + h) % 24 === hourIdx) {
+                      covers = true;
+                      break;
+                  }
+              }
+              
+              if (covers) {
+                  if (!first) constraintExpr += " + ";
+                  constraintExpr += `x_${j}`;
+                  first = false;
+              }
+          }
+      });
+      
+      if (constraintExpr === "") {
+          // If no pattern covers this hour, but demand > 0, it's infeasible.
+          // We add a dummy constraint.
+          constraintExpr = "0";
+      }
+      
+      objective += `  c_${i}: ${constraintExpr} >= ${demand}\n`;
+  }
+  
+  // Mix Constraints
+  // PT <= partTimeCap% of (FT + PT + WW)
+  // WW <= weekendCap% of (FT + PT + WW)
+  
+  const ptRatio = constraints.partTimeCap / 100;
+  const wwRatio = constraints.weekendCap / 100;
+  
+  let ptConstraintExpr = "";
+  let wwConstraintExpr = "";
+  
+  patterns.forEach((p, j) => {
+      // For PT constraint: (1 - ptRatio)*PT - ptRatio*FT - ptRatio*WW <= 0
+      let ptCoeff = 0;
+      if (p.role === 'Part Time') {
+          ptCoeff = 1 - ptRatio;
+      } else {
+          ptCoeff = -ptRatio;
+      }
+      
+      if (ptCoeff !== 0) {
+          if (ptConstraintExpr !== "" && ptCoeff > 0) ptConstraintExpr += " + ";
+          else if (ptConstraintExpr !== "" && ptCoeff < 0) ptConstraintExpr += " - ";
+          else if (ptConstraintExpr === "" && ptCoeff < 0) ptConstraintExpr += "- ";
+          ptConstraintExpr += `${Math.abs(ptCoeff)} x_${j}`;
+      }
+      
+      // For WW constraint: (1 - wwRatio)*WW - wwRatio*FT - wwRatio*PT <= 0
+      let wwCoeff = 0;
+      if (p.role === 'Weekend Warrior') {
+          wwCoeff = 1 - wwRatio;
+      } else {
+          wwCoeff = -wwRatio;
+      }
+      
+      if (wwCoeff !== 0) {
+          if (wwConstraintExpr !== "" && wwCoeff > 0) wwConstraintExpr += " + ";
+          else if (wwConstraintExpr !== "" && wwCoeff < 0) wwConstraintExpr += " - ";
+          else if (wwConstraintExpr === "" && wwCoeff < 0) wwConstraintExpr += "- ";
+          wwConstraintExpr += `${Math.abs(wwCoeff)} x_${j}`;
+      }
+  });
+  
+  if (ptConstraintExpr === "") ptConstraintExpr = "0";
+  if (wwConstraintExpr === "") wwConstraintExpr = "0";
+  
+  objective += `  mix_pt: ${ptConstraintExpr} <= 0\n`;
+  objective += `  mix_ww: ${wwConstraintExpr} <= 0\n`;
+  
+  objective += "Bounds\n";
+  objective += bounds.join("\n") + "\n";
+  
+  objective += "General\n";
+  objective += generals.join("\n") + "\n";
+  
+  objective += "End\n";
 
-    DAYS.forEach((day) => {
-        const startBlock = pattern.shifts[day];
-        if (startBlock !== null) {
-            // How many blocks does this shift cover?
-            // FT/WW (9h) covers 2 blocks effectively (8h). PT covers 1 block (4h).
-            const durationBlocks = pattern.role === 'Part Time' ? 1 : 2;
-            
-            for (let b = 0; b < durationBlocks; b++) {
-                const blockIdx = (startBlock + b) % 6;
-                const needed = currentMatrix[day][blockIdx];
-                
-                if (needed > 0) {
-                    // Reward for covering a gap
-                    score += REWARD_COVERED;
-                    coveredCount++;
-                } else {
-                    // Penalty for overstaffing
-                    // Adaptive Logic: The deeper the overstaffing, the higher the penalty.
-                    // If needed is 0 (just filled), penalty is BASE.
-                    // If needed is -1 (1 extra), penalty is BASE + COMPOUND.
-                    // If needed is -5 (5 extra), penalty is HIGH.
-                    const currentOverstaff = Math.abs(needed); // 0, 1, 2...
-                    
-                    // Linear scaling works well to maintain sanity without blocking valid structural waste
-                    const penalty = PENALTY_BASE + (currentOverstaff * PENALTY_COMPOUND);
-                    score -= penalty;
-                }
-            }
-        }
-    });
-
-    // If a pattern doesn't cover ANY new demand, force score to negative infinity so we don't pick it
-    if (coveredCount === 0) return -Infinity;
-
-    return score;
-  };
-
-  const patterns = generatePatterns();
+  // Run Highs
+  const h = await highs({
+    locateFile: (file) => {
+      if (file === 'highs.wasm') return highsWasmUrl;
+      return file;
+    }
+  });
+  const result = h.solve(objective);
+  
   const roster: AssociateRoster[] = [];
-  const MAX_ITERATIONS = 1500; 
-  let iterations = 0;
+  
+  if (result.Status === 'Optimal') {
+      // Parse solution
+      patterns.forEach((p, j) => {
+          const varName = `x_${j}`;
+          const count = Math.round(result.Columns[varName].Primal || 0);
+          
+          for (let k = 0; k < count; k++) {
+              const newAssociate: AssociateRoster = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  name: `Associate ${roster.length + 1}`,
+                  role: p.role,
+                  schedule: {} as any,
+                  totalHours: p.weeklyHours
+              };
 
-  // 2. Iterative Pattern Selection (Hill Climbing)
-  while (iterations < MAX_ITERATIONS) {
-    // A. Check if we still have significant demand
-    const totalUnmet = Object.values(residualMatrix).flat().reduce((sum, val) => sum + (val > 0 ? val : 0), 0);
-    if (totalUnmet <= 0) break;
+              DAYS.forEach(day => {
+                  const startHour = p.shifts[day];
+                  if (startHour === null) {
+                      newAssociate.schedule[day] = 'OFF';
+                  } else {
+                      newAssociate.schedule[day] = formatShiftTime(startHour, p.shiftDuration);
+                  }
+              });
 
-    // B. Find best pattern
-    let bestPattern: SchedulePattern | null = null;
-    let bestScore = -Infinity;
-
-    for (const pattern of patterns) {
-        const score = calculatePatternScore(pattern, residualMatrix);
-        
-        if (score > bestScore) {
-            bestScore = score;
-            bestPattern = pattern;
-        }
-    }
-
-    // C. Selection Criteria
-    // We pick the best pattern if it's valid (-Infinity check).
-    // Note: We ALLOW negative scores (e.g. -50) if it's the "best" available option.
-    // This implies that covering the gap (Reward) was worth less than the structural waste (Penalty),
-    // BUT we still need to fill the gap to satisfy the "No Unstaffed" requirement.
-    // The Greedy nature ensures we picked the *least bad* option (best aligned pattern).
-    if (!bestPattern || bestScore === -Infinity) {
-        break; 
-    }
-
-    // D. Add to Roster
-    const newAssociate: AssociateRoster = {
-        id: Math.random().toString(36).substr(2, 9),
-        name: `Associate ${roster.length + 1}`,
-        role: bestPattern.role,
-        schedule: {} as any,
-        totalHours: bestPattern.weeklyHours
-    };
-
-    // Apply schedule strings
-    DAYS.forEach(day => {
-        const startBlock = bestPattern!.shifts[day];
-        if (startBlock === null) {
-            newAssociate.schedule[day] = 'OFF';
-        } else {
-            newAssociate.schedule[day] = formatShiftTime(startBlock, bestPattern!.shiftDuration);
-            
-            // E. Update Residual Matrix
-            const durationBlocks = bestPattern!.role === 'Part Time' ? 1 : 2;
-            for (let b = 0; b < durationBlocks; b++) {
-                const blockIdx = (startBlock + b) % 6;
-                residualMatrix[day][blockIdx]--;
-            }
-        }
-    });
-
-    roster.push(newAssociate);
-    iterations++;
+              roster.push(newAssociate);
+          }
+      });
+  } else {
+      throw new Error(`Highs solver failed to find an optimal solution. Status: ${result.Status}`);
   }
 
   // 3. Post-Process: Sort & Clean
@@ -282,15 +336,15 @@ export const generateORToolsStaffingPlan = (
   const ptCount = roster.filter(a => a.role === 'Part Time').length;
   const wkCount = roster.filter(a => a.role === 'Weekend Warrior').length;
 
-  const summary = `Optimization Method: Adaptive Constraint Solver (OR-Tools Logic)
+  const summary = `Optimization Method: Highs WASM MILP Solver
 
-This solver uses an adaptive scoring algorithm to balance strict coverage against staffing efficiency.
+This solver uses a Mixed-Integer Linear Programming (MILP) model solved via WebAssembly.
 
-1.  **Gap Filling (High Priority):** A high base reward ensures no shifts are left unstaffed, even if it requires adding headcount that creates availability elsewhere.
-2.  **Adaptive Overstaffing Control:** The solver applies a compounding penalty to time blocks that are already overstaffed. This prevents "300%+" utilization spikes by forcing the algorithm to find patterns that rotate off-days into these over-served periods.
-3.  **Constraint Adherence:** Strictly maintains 6-day work weeks for FT/PT and 2-day weekends for Warriors.
+1.  **Mathematical Optimality:** It guarantees the mathematically optimal combination of shift patterns to minimize total scheduled hours while strictly meeting or exceeding demand for every hour of the week.
+2.  **Strict Constraints:** It strictly enforces the Part-Time and Weekend Warrior mix caps as linear constraints within the model.
+3.  **Pattern Universe:** It selects from a pre-generated universe of valid shift patterns (6-day FT/PT, weekend-only WW) that adhere to start/end time rules.
 
-The result is a roster that guarantees coverage while intelligently distributing the inevitable structural slack across the week to minimize extreme overstaffing.`;
+The result is the most efficient possible roster that satisfies all constraints and demand requirements.`;
 
   return {
     solverMethod: 'ortools',
@@ -303,20 +357,19 @@ The result is a roster that guarantees coverage while intelligently distributing
     },
     roster,
     recommendations: [
-      "Dynamic penalties applied to prevent stacking overstaffing.",
-      "Coverage guarantees prioritized over raw efficiency.",
-      "Structural waste distributed via optimized off-day rotation."
+      "Mathematically optimal shift coverage achieved.",
+      "Mix caps strictly enforced via linear constraints.",
+      "Total scheduled hours minimized."
     ]
   };
 };
 
 // Helper
-const formatShiftTime = (startIndex: number, duration: number): string => {
-    const startHour = 6 + (startIndex * 4);
+const formatShiftTime = (startHour: number, duration: number): string => {
     const endHour = (startHour + duration) % 24;
     
     const format = (h: number) => `${h.toString().padStart(2, '0')}:00`;
-    const startStr = format(startHour >= 24 ? startHour - 24 : startHour);
+    const startStr = format(startHour);
     const endStr = format(endHour);
     
     return `${startStr}-${endStr}`;
