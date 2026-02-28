@@ -15,9 +15,10 @@ export default defineConfig(({ mode }) => {
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
       },
       resolve: {
-        alias: {
-          '@': path.resolve(__dirname, '.')
-        }
+        alias: [
+          { find: '@', replacement: path.resolve(__dirname, '.') },
+          { find: 'highs/runtime', replacement: 'highs/build/highs.wasm' }
+        ]
       },
       optimizeDeps: {
         include: ['highs']
