@@ -5,7 +5,8 @@ import DemandInput from './components/DemandInput';
 import ConstraintsForm from './components/ConstraintsForm';
 import SolutionDashboard from './components/SolutionDashboard';
 import { generateAlgorithmicStaffingPlan } from './services/staffingAlgorithm';
-import { Layers, Zap, Loader2, BrainCircuit, Shuffle } from 'lucide-react';
+import { generateORToolsStaffingPlan } from './services/orToolsSolver';
+import { Layers, Zap, Loader2, Calculator, BrainCircuit, Shuffle } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'input' | 'results'>('input');
@@ -14,6 +15,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [solution, setSolution] = useState<StaffingSolution | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [solverType, setSolverType] = useState<'greedy' | 'ortools'>('greedy');
 
   const handleOptimize = async () => {
     setIsLoading(true);
@@ -24,7 +26,12 @@ export default function App() {
     await new Promise(resolve => setTimeout(resolve, 100));
 
     try {
-      const result = generateAlgorithmicStaffingPlan(demand, constraints);
+      let result: StaffingSolution;
+      if (solverType === 'ortools') {
+        result = await generateORToolsStaffingPlan(demand, constraints);
+      } else {
+        result = generateAlgorithmicStaffingPlan(demand, constraints);
+      }
       setSolution(result);
       setActiveTab('results');
     } catch (err: any) {
@@ -95,13 +102,19 @@ export default function App() {
                   Methodology
                 </h3>
                 <div className="flex items-start gap-2">
-                  <Shuffle className="w-4 h-4 text-purple-600 mt-0.5 shrink-0" />
+                  {solverType === 'greedy' ? (
+                       <Calculator className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
+                  ) : (
+                       <Shuffle className="w-4 h-4 text-purple-600 mt-0.5 shrink-0" />
+                  )}
                   <div>
                     <p className="text-xs font-medium text-slate-900">
-                      Greedy Heuristic
+                      {solverType === 'greedy' ? 'Greedy Heuristic' : 'Pattern-Based (Highs WASM)'}
                     </p>
                     <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
-                      Peak-protected shift generation.
+                      {solverType === 'greedy' 
+                          ? 'Peak-protected shift generation.' 
+                          : 'Uses a Mixed-Integer Linear Programming (MILP) model to fit pre-defined consistent shift patterns against the demand curve.'}
                     </p>
                   </div>
                 </div>
@@ -123,17 +136,33 @@ export default function App() {
                   <Zap className="w-5 h-5 text-yellow-400" />
                   Generate Optimized Roster
                 </h3>
+                  
+                {/* Solver Toggle */}
+                <div className="flex items-center gap-4 mt-3 bg-slate-900/50 p-2 rounded-lg border border-slate-700 w-fit">
+                  <button 
+                      onClick={() => setSolverType('greedy')}
+                      className={`text-xs px-3 py-1.5 rounded transition-all flex items-center gap-2 ${solverType === 'greedy' ? 'bg-indigo-600 text-white font-medium shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                      <Calculator className="w-3 h-3" />
+                      Greedy Deterministic
+                  </button>
+                  <button 
+                      onClick={() => setSolverType('ortools')}
+                      className={`text-xs px-3 py-1.5 rounded transition-all flex items-center gap-2 ${solverType === 'ortools' ? 'bg-purple-600 text-white font-medium shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                      <Shuffle className="w-3 h-3" />
+                      Pattern Solver (Highs WASM)
+                  </button>
+                </div>
                 <p className="text-slate-400 text-xs mt-2 italic">
-                   Powered by Greedy Heuristic.
-                   <br />
-                   This solver uses a custom constructive heuristic with Peak Protected Smearing to optimize shift coverage and protect service levels.
+                   {solverType === 'greedy' ? 'Best for precise gap filling and strict efficiency.' : 'Best for consistent shift patterns and smoother rosters.'}
                 </p>
               </div>
 
               <button
                 onClick={handleOptimize}
                 disabled={isLoading}
-                className={`shrink-0 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-md min-w-[200px] bg-purple-600 hover:bg-purple-700`}
+                className={`shrink-0 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-md min-w-[200px] ${solverType === 'ortools' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}
               >
                 {isLoading ? (
                   <>
@@ -143,7 +172,7 @@ export default function App() {
                 ) : (
                   <>
                     <BrainCircuit className="w-5 h-5" />
-                    Run Solver
+                    Run {solverType === 'ortools' ? 'Pattern Solver' : 'Solver'}
                   </>
                 )}
               </button>
